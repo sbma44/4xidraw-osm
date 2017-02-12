@@ -28,7 +28,8 @@ for D in $DOWNLOAD; do
     for g in line point polygon; do
         echo "
             SELECT UpdateGeometrySRID('planet_osm_$g', 'way', 4326);
-            UPDATE planet_osm_$g SET way = ST_TRANSFORM( ST_SETSRID( way, 900913), 4326 );" | psql -U postgres $DBNAME
+            UPDATE planet_osm_$g SET way = ST_TRANSFORM( ST_SETSRID( way, 900913), 4326 );
+            ALTER TABLE planet_osm_$g ALTER COLUMN way SET DATA TYPE geometry;" | psql -U postgres $DBNAME
     done
 
     rm "$TMP/$(basename $D .bz2)"

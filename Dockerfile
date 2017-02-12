@@ -18,7 +18,7 @@ RUN apt-get update -y && \
     apt-get update -y && \
     apt-get install -y libpq-dev libgeos-c1 libgeos++-dev libgeos-dev=3.4.2-4ubuntu1 proj-bin libspatialite5=4.1.1-5ubuntu1 unzip zip && \
     apt-get install -y postgresql-9.6 postgresql-client-9.6 postgresql-contrib-9.6 postgresql-plpython-9.6 postgresql-9.6-postgis-scripts postgresql-common postgresql-client-common postgis=2.3.2+dfsg-1~exp1.pgdg14.04+1
-RUN apt-get install -y python-software-properties python-setuptools python-dev build-essential gcc-4.7 gcc g++ git libprotobuf8 libprotobuf-dev protobuf-compiler libprotobuf-dev libsqlite3-dev libdbd-xbase-perl gdal-bin=1.11.2+dfsg-1~exp2~trusty bc pkg-config libpng12-dev sqlite3 jq p7zip p7zip-full ruby parallel psmisc htop wget zip unzip libxslt1-dev python-dev python-pyproj python-gdal=1.10.1+dfsg-5ubuntu1 python-pip && \
+RUN apt-get install -y python-software-properties python-setuptools python-dev build-essential gcc-4.7 gcc g++ git libprotobuf8 libprotobuf-dev protobuf-compiler libprotobuf-dev libsqlite3-dev libdbd-xbase-perl gdal-bin=1.11.2+dfsg-1~exp2~trusty bc pkg-config libpng12-dev sqlite3 jq p7zip p7zip-full ruby parallel psmisc htop wget zip unzip libxslt1-dev python-dev python-pyproj python-psycopg2 python-gdal=1.10.1+dfsg-5ubuntu1 python-pip && \
     apt-get autoremove -y && \
     apt-get autoclean -y
 RUN pip install shapely
@@ -38,4 +38,11 @@ RUN echo "listen_addresses = '*'" >> /etc/postgresql/9.6/main/postgresql.conf
 
 RUN mkdir -p ./script
 ADD script/load.sh ./script/
+ADD script/excerpt.sh ./script/
+RUN mkdir -p /root/.aws
+ADD aws-config /root/.aws/config
+RUN chmod a+x script/*
+
 RUN script/load.sh "$DOWNLOAD"
+
+ENTRYPOINT [ "./script/excerpt.sh" ]
