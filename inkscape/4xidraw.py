@@ -879,9 +879,6 @@ class Gcode_tools(inkex.Effect):
         #The end of the layer.
         if si[1] == 'end':
             if not gcode.endswith(PEN_UP):
-                # gcode += PEN_UP
-                # self.pen_is_down = False
-                # gcode += '; LAYER END PEN UP\n'
                 gcode += '; LAYER END\n'
 
         return gcode
@@ -1064,7 +1061,7 @@ class Gcode_tools(inkex.Effect):
         gcode = ""
         gcode_raster = ""
         for layer in layers:
-            label = layer.get(SVG_LABEL_TAG).strip()
+            label = layer.get(SVG_LABEL_TAG, '').strip()
             if (label.startswith("#")):
                 # Ignore everything selected in this layer
                 for node in layer.iterchildren():
@@ -1182,6 +1179,9 @@ class Gcode_tools(inkex.Effect):
                 elif (curve['type'] == "raster"):
                     gcode_raster += header_data + self.generate_raster_gcode(curve, altfeed=altfeed)
 
+            gcode += PEN_UP
+            self.pen_is_down = False
+            gcode += '; ORDERED PATH LIST END / PEN UP\n'
 
         #Turnkey - Need to figure out why inkscape sometimes gets to this point and hasn't found the objects above.
         # If there are any objects left over, it's because they don't belong
