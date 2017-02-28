@@ -15,7 +15,7 @@ for D in $DOWNLOAD; do
         bunzip2 "$TMP/$(basename $D)"
     fi
 
-    DBNAME="$(basename $D .osm.bz2 | tr '-' '_')"
+    DBNAME="osm"
     echo "- creating database $DBNAME"
     dropdb --if-exists -U postgres "$DBNAME"
     createdb -U postgres "$DBNAME"

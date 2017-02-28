@@ -157,10 +157,11 @@ SVG_IMAGE_TAG = inkex.addNS('image', 'svg')
 SVG_TEXT_TAG = inkex.addNS('text', 'svg')
 SVG_LABEL_TAG = inkex.addNS("label", "inkscape")
 
-
-GCODE_EXTENSION = ".g" # changed to be Marlin friendly (ajf)
+GCODE_EXTENSION = ".g"
 
 options = {}
+
+extents = None
 
 ################################################################################
 ###
@@ -584,6 +585,15 @@ class Gcode_tools(inkex.Effect):
         m = [self.options.Xscale, -self.options.Yscale, 1,
              self.options.Xscale, -self.options.Yscale, 1]
         a = [self.options.Xoffset, self.options.Yoffset, 0, 0, 0, 0]
+
+        global extents
+        if extents is None:
+            extents = [c[0], c[1], c[0], c[1]]
+        else:
+            extents[0] = min(extents[0], c[0])
+            extents[1] = min(extents[1], c[1])
+            extents[2] = max(extents[2], c[0])
+            extents[3] = max(extents[3], c[1])
 
         #There's no aphrodisiac like loneliness
         #Add the page height if the origin is the bottom left.
@@ -1321,7 +1331,6 @@ class Gcode_tools(inkex.Effect):
 
             self.options.Yscale *= -1
             self.flipArcs = not(self.flipArcs)
-            #self.options.generate_not_parametric_code = True
             self.pageHeight = 0
             gcode += self.effect_curve(selected)
 
@@ -1332,6 +1341,8 @@ class Gcode_tools(inkex.Effect):
         except:
             inkex.errormsg(("Can not write to specified file!"))
             return
+
+        inkex.errormsg(str(extents))
 
         if (self.skipped > 0):
             inkex.errormsg(("Warning: skipped %d object(s) because they were not paths (Vectors) or images (Raster). Please convert them to paths using the menu 'Path->Object To Path'" % self.skipped))

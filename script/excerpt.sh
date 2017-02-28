@@ -5,8 +5,9 @@
 
 set -eu -o pipefail
 
-DBNAME="$1"
-CLIP="$2"
+DBNAME="osm"
+CLIP="$1"
+BUCKET="$2"
 PSQL="psql -U postgres -t -q $DBNAME"
 TMP="/tmp/4xidraw/out"
 mkdir -p "$TMP"
@@ -69,7 +70,7 @@ sed 's/<g /<g inkscape:groupmode="layer" /g' < $TMP/$SNAPSHOT.svg > $TMP/$SNAPSH
 
 # compress & upload
 (cd $TMP && zip "$TMP/$SNAPSHOT.zip" $SNAPSHOT.svg)
-aws s3 cp "$TMP/$SNAPSHOT.zip" s3://sbma44-4xidraw/$SNAPSHOT.zip
+aws s3 cp "$TMP/$SNAPSHOT.zip" "$BUCKET/$SNAPSHOT.zip"
 
 echo "done!"
 echo "s3://sbma44-4xidraw/$SNAPSHOT.zip"
