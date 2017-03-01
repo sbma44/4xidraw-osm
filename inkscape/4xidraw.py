@@ -4,13 +4,8 @@
 4xidraw Inkscape Exporter
 
 -----------------------------------
-Maintained by Turnkey Tyranny (https://github.com/TurnkeyTyranny/laser-gcode-exporter-inkscape-plugin)
-Designed to run on Ramps 1.4 + Marlin firmware on a K40 CO2 Laser Cutter.
-Based on think|haus gcode inkscape extension
-Based on a script by Nick Drobchenko from the CNC club
 
-***
-
+Copyright (c) 2017 Thomas Lee <thomas.j.lee@gmail.com>
 Copyright (C) 2009 Nick Drobchenko, nick@cnc-club.ru
 based on gcode.py (C) 2007 hugomatic...
 based on addnodes.py (C) 2005,2007 Aaron Spike, aaron@ekips.org

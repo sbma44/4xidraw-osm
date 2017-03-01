@@ -1,0 +1,29 @@
+FROM ubuntu:14.04
+
+# Configure shell
+RUN rm /bin/sh && ln -s /bin/bash /bin/sh
+ENV SHELL /bin/bash
+
+RUN apt-get update -y && \
+    apt-get install -y curl software-properties-common apt-transport-https && \
+    add-apt-repository "deb http://apt.postgresql.org/pub/repos/apt/ trusty-pgdg main" && \
+    curl https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add - && \
+    apt-get update -y && \
+    apt-get install -y libpq-dev libgeos-c1 libgeos++-dev libgeos-dev=3.4.2-4ubuntu1 proj-bin libspatialite5=4.1.1-5ubuntu1 unzip zip && \
+    apt-get install -y postgresql-9.6 postgresql-client-9.6 postgresql-contrib-9.6 postgresql-plpython-9.6 postgresql-9.6-postgis-scripts postgresql-common postgresql-client-common postgis=2.3.2+dfsg-1~exp1.pgdg14.04+1 && \
+    apt-get install -y python-software-properties python-setuptools python-dev build-essential gcc-4.7 gcc g++ git libprotobuf8 libprotobuf-dev protobuf-compiler libprotobuf-dev libsqlite3-dev libdbd-xbase-perl gdal-bin=1.10.1+dfsg-5ubuntu1 bc pkg-config libpng12-dev sqlite3 jq p7zip p7zip-full ruby parallel psmisc htop wget zip unzip libxslt1-dev python-dev python-pyproj python-psycopg2 python-gdal=1.10.1+dfsg-5ubuntu1 python-pip && \
+    chmod a+rx $HOME && \
+    easy_install pip && \
+    pip install --upgrade pip && \
+    pip install shapely csvkit awscli && \
+    pip install https://github.com/kartograph/kartograph.py/zipball/master -r https://raw.github.com/kartograph/kartograph.py/master/requirements.txt && \
+    apt-get install -y --no-install-recommends osm2pgsql tmux vim && \
+    apt-get autoremove -y && \
+    apt-get autoclean -y
+
+# custom postgres settings
+RUN bash -c "echo \"max_locks_per_transaction=512\" >> /etc/postgresql/9.6/main/postgresql.conf"
+RUN bash -c "echo \"max_connections=1000\" >> /etc/postgresql/9.6/main/postgresql.conf"
+ADD ./etc/pg_hba.conf /tmp/pg_hba.conf
+RUN cp /tmp/pg_hba.conf /etc/postgresql/9.6/main/pg_hba.conf
+RUN echo "listen_addresses = '*'" >> /etc/postgresql/9.6/main/postgresql.conf

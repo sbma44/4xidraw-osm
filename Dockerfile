@@ -1,13 +1,11 @@
-FROM sbma44/4xidraw-osm-base:1
+FROM sbma44/4xidraw-osm:base
 ARG DOWNLOAD
+ARG S3
 EXPOSE 5432
 
 RUN mkdir -p ./script
 ADD script/load.sh ./script/
 ADD script/excerpt.sh ./script/
-RUN mkdir -p /root/.aws
-ADD aws-config /root/.aws/config
-RUN chmod a+x script/*
 
 RUN script/load.sh "$DOWNLOAD"
 

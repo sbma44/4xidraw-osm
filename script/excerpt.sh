@@ -7,7 +7,7 @@ set -eu -o pipefail
 
 DBNAME="osm"
 CLIP="$1"
-BUCKET="$2"
+DEST="$2"
 PSQL="psql -U postgres -t -q $DBNAME"
 TMP="/tmp/4xidraw/out"
 mkdir -p "$TMP"
@@ -33,6 +33,7 @@ CRITERIA="highway|planet_osm_line|highway IS NOT NULL
 bicycle|planet_osm_line|route='bicycle'
 train|planet_osm_line|route='train'
 building|planet_osm_polygon|building IS NOT NULL"
+if [ -n "${LAYERS:-}" ]; then CRITERIA="${LAYERS:-}"; fi
 echo "$CRITERIA" > $TMP/criteria
 while IFS='' read -r criterion; do
   LABEL="$(echo $criterion | cut -d '|' -f 1)"
@@ -68,9 +69,13 @@ kartograph $TMP/../config.json -o $TMP/$SNAPSHOT.svg
 # convert groups to inkscape layers
 sed 's/<g /<g inkscape:groupmode="layer" /g' < $TMP/$SNAPSHOT.svg > $TMP/$SNAPSHOT.svg.new && mv $TMP/$SNAPSHOT.svg.new $TMP/$SNAPSHOT.svg
 
-# compress & upload
-(cd $TMP && zip "$TMP/$SNAPSHOT.zip" $SNAPSHOT.svg)
-aws s3 cp "$TMP/$SNAPSHOT.zip" "$BUCKET/$SNAPSHOT.zip"
-
-echo "done!"
-echo "s3://sbma44-4xidraw/$SNAPSHOT.zip"
+if [ -n "$(echo "$DEST" | grep 's3://')" ]; then
+  # compress & upload
+  (cd $TMP && zip "$TMP/$SNAPSHOT.zip" $SNAPSHOT.svg)
+  aws s3 cp "$TMP/$SNAPSHOT.zip" "$DEST/$SNAPSHOT.zip"
+  echo "$DEST/$SNAPSHOT.zip"
+else
+  # copy to output dir
+  cp "$TMP/$SNAPSHOT.svg" "$DEST"
+  echo "$DEST/$SNAPSHOT.svg"
+fi
