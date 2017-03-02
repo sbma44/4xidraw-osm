@@ -3,7 +3,7 @@ import glob
 import sys
 import os.path
 
-RE_COORD = re.compile(r'([XY])(\d+(\.\d+)?)')
+RE_COORD = re.compile(r'([XY])(\-?\d+(\.\d+)?)')
 
 def get_gcode_files():
     for arg in sys.argv[1:]:
@@ -36,19 +36,23 @@ def translate_gcode_file(gcode_file, x_offset, y_offset):
     out_file = open('.'.join(os.path.basename(gcode_file).split('.')[:-1]) + '.translated.g', 'w')
     with open(gcode_file) as f:
         for line in f:
+            needs_newline = False
             for (i, line_part) in enumerate(line.split(' ')):
                 if i > 0:
                     out_file.write(' ')
                 m = RE_COORD.match(line_part)
                 if m is None:
                     out_file.write(line_part)
+                    needs_newline = False
                 else:
                     offset = x_offset
                     if m.group(1) == 'Y':
                         offset = y_offset
                     out_file.write(m.group(1))
                     out_file.write('{:.3f}'.format(float(m.group(2)) + offset))
-            out_file.write('\n')
+                    needs_newline = True
+            if needs_newline:
+                out_file.write('\n')
     out_file.close()
 
 if __name__ == '__main__':
