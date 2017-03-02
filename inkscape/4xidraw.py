@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-"""
+'''
 4xidraw Inkscape Exporter
 
 -----------------------------------
@@ -25,9 +25,15 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
-"""
+'''
 
-"""
+'''
+
+Changelog 2017-03-01:
+* More 4xidraw customization
+  - trim unneeded functionality (e.g. laser power settings)
+  - optimize path ordering for longer continuous drawing strokes
+  - rewrite portions to be more pythonic
 
 Changelog 2016-02-11:
 * Adapt for 4xidraw
@@ -85,7 +91,7 @@ Added M80 command for Tim from LMN
 
 I also fixed up the part of the exporter to allow the offset and scaling functions to work. Though I found that looking at the scaling
 code it will only scale from the original 0,0 coordinate, it doesn't scale based on a centre point.
-"""
+'''
 
 ###
 ###        Gcode tools
@@ -104,7 +110,7 @@ import time
 import json
 import tempfile
 
-#Image processing for rastering
+# Image processing for rastering
 import base64
 from PIL import Image
 from PIL import ImageOps
@@ -128,35 +134,23 @@ logger.setLevel(logging.INFO)
 ###
 ################################################################################
 
-VERSION = "1.0.1"
+VERSION = '1.1.0'
 
 STRAIGHT_TOLERANCE = 0.0001
 STRAIGHT_DISTANCE_TOLERANCE = 0.0001
-PEN_DOWN = "M3 S0\n"          # LASER ON MCODE
-PEN_UP = "M3 S100\nG4P0.1\n"        # LASER OFF MCODE
-
-HEADER_TEXT = ""
-FOOTER_TEXT = ""
-
-BIARC_STYLE = {
-        'biarc0':    simplestyle.formatStyle({ 'stroke': '#88f', 'fill': 'none', 'strokeWidth':'1' }),
-        'biarc1':    simplestyle.formatStyle({ 'stroke': '#8f8', 'fill': 'none', 'strokeWidth':'1' }),
-        'line':        simplestyle.formatStyle({ 'stroke': '#f88', 'fill': 'none', 'strokeWidth':'1' }),
-        'area':        simplestyle.formatStyle({ 'stroke': '#777', 'fill': 'none', 'strokeWidth':'0.1' }),
-    }
+PEN_DOWN = 'M3 S0\n'
+PEN_UP = 'M3 S100\nG4P0.1\n'
 
 # Inkscape group tag
-SVG_GROUP_TAG = inkex.addNS("g", "svg")
+SVG_GROUP_TAG = inkex.addNS('g', 'svg')
 SVG_PATH_TAG = inkex.addNS('path','svg')
 SVG_IMAGE_TAG = inkex.addNS('image', 'svg')
 SVG_TEXT_TAG = inkex.addNS('text', 'svg')
-SVG_LABEL_TAG = inkex.addNS("label", "inkscape")
+SVG_LABEL_TAG = inkex.addNS('label', 'inkscape')
 
-GCODE_EXTENSION = ".g"
+GCODE_EXTENSION = '.gcode'
 
 options = {}
-
-extents = None
 
 ################################################################################
 ###
@@ -196,7 +190,7 @@ class P:
         return P(self.x * c - self.y * s,  self.x * s + self.y * c)
     def angle(self): return math.atan2(self.y, self.x)
     def __repr__(self): return '%f,%f' % (self.x, self.y)
-    def pr(self): return "%.2f,%.2f" % (self.x, self.y)
+    def pr(self): return '%.2f,%.2f' % (self.x, self.y)
     def to_list(self): return [self.x, self.y]
 
 
@@ -385,7 +379,7 @@ def biarc(sp1, sp2, z1, z2, depth=0,):
 # Returns true if the given node is a layer
 def is_layer(node):
     return (node.tag == SVG_GROUP_TAG and
-            node.get(inkex.addNS("groupmode", "inkscape")) == "layer")
+            node.get(inkex.addNS('groupmode', 'inkscape')) == 'layer')
 
 def get_layers(document):
     layers = []
@@ -395,33 +389,6 @@ def get_layers(document):
             # Found an inkscape layer
             layers.append(node)
     return layers
-
-def parse_layer_name(txt):
-    params = {}
-    try:
-        n = txt.index("[")
-    except ValueError:
-        layerName = txt.strip()
-    else:
-        layerName = txt[0:n].strip()
-        args = txt[n+1:].strip()
-        if (args.endswith("]")):
-            args = args[0:-1]
-
-        for arg in args.split(","):
-            try:
-                (field, value) = arg.split("=")
-            except:
-                raise ValueError("Invalid argument in layer '%s'" % layerName)
-            if (field == "feed" or field == "ppm"):
-                try:
-                    value = float(value)
-                except:
-                    raise ValueError("Invalid layer name '%s'" % value)
-            params[field] = value
-            logger.info("%s == %s" % (field, value))
-
-    return (layerName, params)
 
 ################################################################################
 ###
@@ -434,54 +401,30 @@ class Gcode_tools(inkex.Effect):
     def __init__(self):
         inkex.Effect.__init__(self)
 
-        outdir = os.getenv("HOME") or os.getenv("USERPROFILE")
+        outdir = os.getenv('HOME') or os.getenv('USERPROFILE')
         if (outdir):
-            outdir = os.path.join(outdir, "Desktop")
+            outdir = os.path.join(outdir, 'Desktop')
         else:
             outdir = os.getcwd()
 
         self.last_pos = None
 
-        self.OptionParser.add_option("-d", "--directory", action="store", type="string", dest="directory", default=outdir, help="Directory for gcode file")
-        self.OptionParser.add_option("-f", "--filename", action="store", type="string", dest="file", default="-1.0", help="File name")
-        self.OptionParser.add_option("-u", "--Xscale", action="store", type="float", dest="Xscale", default="1.0", help="Scale factor X")
-        self.OptionParser.add_option("-v", "--Yscale", action="store", type="float", dest="Yscale", default="1.0", help="Scale factor Y")
-        self.OptionParser.add_option("-x", "--Xoffset", action="store", type="float", dest="Xoffset", default="0.0", help="Offset along X")
-        self.OptionParser.add_option("-y", "--Yoffset", action="store", type="float", dest="Yoffset", default="0.0", help="Offset along Y")
-        # added move (laser off) feedrate and laser intensity; made all int rather than float - (ajf)
-
-        self.OptionParser.add_option("-m", "--Mfeed", action="store", type="int", dest="Mfeed", default="2000", help="Default Move Feed rate in unit/min")
-        self.OptionParser.add_option("-p", "--feed", action="store", type="int", dest="feed", default="300", help="Default Cut Feed rate in unit/min")
-        self.OptionParser.add_option("-l", "--laser", action="store", type="int", dest="laser", default="10", help="Default Laser intensity (0-100 %)")
-        self.OptionParser.add_option("-b", "--homebefore", action="store", type="inkbool", dest="homebefore", default=True, help="Home all beofre starting (G28 XY)")
-        self.OptionParser.add_option("-a", "--homeafter", action="store", type="inkbool", dest="homeafter", default=False, help="Home X Y at end of job")
-
-
-        self.OptionParser.add_option("", "--biarc-tolerance", action="store", type="float", dest="biarc_tolerance", default="1", help="Tolerance used when calculating biarc interpolation.")
-        self.OptionParser.add_option("", "--biarc-max-split-depth", action="store", type="int", dest="biarc_max_split_depth", default="4", help="Defines maximum depth of splitting while approximating using biarcs.")
-
-        self.OptionParser.add_option("", "--unit", action="store", type="string", dest="unit", default="G21 (All units in mm)\n", help="Units")
-        self.OptionParser.add_option("", "--function", action="store", type="string", dest="function", default="Curve", help="What to do: Curve|Area|Area inkscape")
         self.OptionParser.add_option("", "--tab", action="store", type="string", dest="tab", default="", help="Means nothing right now. Notebooks Tab.")
-        #self.OptionParser.add_option("", "--generate_not_parametric_code",action="store", type="inkbool", dest="generate_not_parametric_code", default=False,help="Generated code will be not parametric.")
-        self.OptionParser.add_option("", "--double_sided_cutting",action="store", type="inkbool", dest="double_sided_cutting", default=False,help="Generate code for double-sided cutting.")
-        self.OptionParser.add_option("", "--draw-curves", action="store", type="inkbool", dest="drawCurves", default=False,help="Draws curves to show what geometry was processed")
-        self.OptionParser.add_option("", "--logging", action="store", type="inkbool", dest="logging", default=False, help="Enable output logging from the plugin")
-
-        self.OptionParser.add_option("", "--loft-distances", action="store", type="string", dest="loft_distances", default="10", help="Distances between paths.")
-        self.OptionParser.add_option("", "--loft-direction", action="store", type="string", dest="loft_direction", default="crosswise", help="Direction of loft's interpolation.")
-        self.OptionParser.add_option("", "--loft-interpolation-degree",action="store", type="float", dest="loft_interpolation_degree", default="2", help="Which interpolation use to loft the paths smooth interpolation or staright.")
-
-        self.OptionParser.add_option("", "--min-arc-radius", action="store", type="float", dest="min_arc_radius", default="0.0005", help="All arc having radius less than minimum will be considered as straight line")
-        self.OptionParser.add_option("", "--origin", action="store", type="string", dest="origin", default="topleft", help="Origin of the Y Axis")
-        self.OptionParser.add_option("", "--optimiseraster", action="store", type="inkbool", dest="optimiseraster", default=True, help="Optimise raster horizontal scanning speed")
-
+        self.OptionParser.add_option('-d', '--directory', action='store', type='string', dest='directory', default=outdir, help='Directory for gcode file')
+        self.OptionParser.add_option('-f', '--filename', action='store', type='string', dest='file', default='-1.0', help='File name')
+        self.OptionParser.add_option('-u', '--Xscale', action='store', type='float', dest='Xscale', default='1.0', help='Scale factor X')
+        self.OptionParser.add_option('-v', '--Yscale', action='store', type='float', dest='Yscale', default='1.0', help='Scale factor Y')
+        self.OptionParser.add_option('-x', '--Xoffset', action='store', type='float', dest='Xoffset', default='0.0', help='Offset along X')
+        self.OptionParser.add_option('-y', '--Yoffset', action='store', type='float', dest='Yoffset', default='0.0', help='Offset along Y')
+        self.OptionParser.add_option('', '--biarc-tolerance', action='store', type='float', dest='biarc_tolerance', default='1', help='Tolerance used when calculating biarc interpolation.')
+        self.OptionParser.add_option('', '--biarc-max-split-depth', action='store', type='int', dest='biarc_max_split_depth', default='4', help='Defines maximum depth of splitting while approximating using biarcs.')
+        self.OptionParser.add_option('', '--min-arc-radius', action='store', type='float', dest='min_arc_radius', default='0.0005', help='All arc having radius less than minimum will be considered as straight line')
 
     def parse_curve(self, path):
         xs,ys = 1.0,1.0
-        if(path['type'] ==  "vector") :
+        if(path['type'] ==  'vector') :
             lst = {}
-            lst['type'] = "vector"
+            lst['type'] = 'vector'
             lst['data'] = []
             for subpath in path['data']:
                 lst['data'].append(
@@ -496,303 +439,47 @@ class Gcode_tools(inkex.Effect):
                     [[subpath[-1][1][0]*xs, subpath[-1][1][1]*ys], 'end', 0, 0]
                 )
             return lst
-        #Raster image data, cut/burn left to right, drop down a line, repeat in reverse until completed.
+        # Raster image data, cut/burn left to right, drop down a line, repeat in reverse until completed.
         else:
-            #No need to modify
             return path
 
-    def draw_curve(self, curve, group=None, style=BIARC_STYLE):
-        if group==None:
-            group = inkex.etree.SubElement( self.biarcGroup, SVG_GROUP_TAG )
-        s, arcn = '', 0
-        for si in curve:
-            if s!='':
-                if s[1] == 'line':
-                    inkex.etree.SubElement(group, SVG_PATH_TAG,
-                            {
-                                'style': style['line'],
-                                'd':'M %s,%s L %s,%s' % (s[0][0], s[0][1], si[0][0], si[0][1]),
-                                'comment': str(s)
-                            }
-                        )
-                elif s[1] == 'arc':
-                    arcn += 1
-                    sp = s[0]
-                    c = s[2]
-                    a =  ( (P(si[0])-P(c)).angle() - (P(s[0])-P(c)).angle() )%(2*math.pi) #s[3]
-                    if s[3]*a<0:
-                            if a>0:    a = a-2*math.pi
-                            else: a = 2*math.pi+a
-                    r = math.sqrt( (sp[0]-c[0])**2 + (sp[1]-c[1])**2 )
-                    a_st = ( math.atan2(sp[0]-c[0],- (sp[1]-c[1])) - math.pi/2 ) % (math.pi*2)
-                    if a>0:
-                        a_end = a_st+a
-                    else:
-                        a_end = a_st*1
-                        a_st = a_st+a
-                    inkex.etree.SubElement(group, inkex.addNS('path','svg'),
-                         {
-                            'style': style['biarc%s' % (arcn%2)],
-                             inkex.addNS('cx','sodipodi'):        str(c[0]),
-                             inkex.addNS('cy','sodipodi'):        str(c[1]),
-                             inkex.addNS('rx','sodipodi'):        str(r),
-                             inkex.addNS('ry','sodipodi'):        str(r),
-                             inkex.addNS('start','sodipodi'):    str(a_st),
-                             inkex.addNS('end','sodipodi'):        str(a_end),
-                             inkex.addNS('open','sodipodi'):    'true',
-                             inkex.addNS('type','sodipodi'):    'arc',
-                            'comment': str(s)
-                        })
-            s = si
-
-
     def check_dir(self):
-        if (os.path.isdir(self.options.directory)):
-            if (os.path.isfile(self.options.directory+'/header')):
-                f = open(self.options.directory+'/header', 'r')
-                self.header = f.read()
-                f.close()
-            else:
-                self.header = HEADER_TEXT
-            if (os.path.isfile(self.options.directory+'/footer')):
-                f = open(self.options.directory+'/footer','r')
-                self.footer = f.read()
-                f.close()
-            else:
-                self.footer = FOOTER_TEXT
-        else:
-            inkex.errormsg(("Directory specified for output gcode does not exist! Please create it."))
+        if not os.path.isdir(self.options.directory):
+            inkex.errormsg(('Directory specified for output gcode does not exist! Please create it.'))
             return False
-
         return True
 
-    # Turns a list of arguments into gcode-style parameters (eg (1, 2, 3) -> "X1 Y2 Z3"),
-    # taking scaling, offsets and the "parametric curve" setting into account
+    # Turns a list of arguments into gcode-style parameters (eg (1, 2, 3) -> 'X1 Y2 Z3'),
+    # taking scaling, offsets and the 'parametric curve' setting into account
     def make_args(self, c):
-        c = [c[i] if i<len(c) else None for i in range(6)]
+        c = [c[i] if i < len(c) else None for i in range(6)]
+        while len(c) < 6:
+            c.append(None)
         if c[5] == 0:
             c[5] = None
-        # next few lines generate the stuff at the front of the file - scaling, offsets, etc (adina)
-        #if self.options.generate_not_parametric_code:
-        s = ["X", "Y", "Z", "I", "J", "K"]
-        s1 = ["", "", "", "", "", ""]
 
-        m = [self.options.Xscale, -self.options.Yscale, 1,
-             self.options.Xscale, -self.options.Yscale, 1]
+        m = [
+                self.options.Xscale,
+                -self.options.Yscale,
+                1,
+                self.options.Xscale,
+                -self.options.Yscale,
+                1
+            ]
         a = [self.options.Xoffset, self.options.Yoffset, 0, 0, 0, 0]
 
-        global extents
-        if extents is None:
-            extents = [c[0], c[1], c[0], c[1]]
-        else:
-            extents[0] = min(extents[0], c[0])
-            extents[1] = min(extents[1], c[1])
-            extents[2] = max(extents[2], c[0])
-            extents[3] = max(extents[3], c[1])
-
-        #There's no aphrodisiac like loneliness
-        #Add the page height if the origin is the bottom left.
-        if (self.options.origin != 'topleft'):
-            a[1] += self.pageHeight
-
         args = []
-        for i in range(6):
+        for (i, axis) in enumerate(('X', 'Y', 'Z', 'I', 'J', 'K')):
             if c[i] is not None:
-                value = self.unitScale*(c[i]*m[i]+a[i])
-                args.append(s[i] + ("%.3f" % value) + s1[i])
-        return " ".join(args)
+                value = self.unitScale*((c[i] * m[i]) + a[i])
+                args.append('%s%.3f' % (axis,value))
+        return ' '.join(args)
 
-
-    def generate_raster_gcode(self, curve, altfeed=None):
+    def generate_gcode(self, curve):
         gcode = ''
 
-        #Setup our feed rate, either from the layer name or from the default value.
-        if (altfeed):
-            # Use the "alternative" feed rate specified
-            cutFeed = "F%i" % altfeed
-        else:
-            #if self.options.generate_not_parametric_code:
-            #    cutFeed = "F%i" % self.options.feed
-            #else:
-            cutFeed = "F%i" % self.options.feed
-
-        #This extension assumes that your copy of Inkscape is running at 90dpi (it is by default)
-        #R = mm per pixel
-        #R = 1 / dots per mm
-        #90dpi = 1 / (90 / 25.4)
-        #Rasters are exported internally at 270dpi.
-        #So R = 1 / (270 / 25.4)
-        #     = 0.09406
-        gcode += '\n\n;Beginning of Raster Image '+str(curve['id'])+' pixel size: '+str(curve['width'])+'x'+str(curve['height'])+'\n'
-
-        #Do not remove these two lines, they're important. Will not raster correctly if feedrate is not set prior.
-        #Move fast to point, cut at correct speed.
-        if(cutFeed < self.options.Mfeed):
-            gcode += 'G0 X'+str(curve['x'])+' Y'+str(curve['y'])+' F'+str(self.options.Mfeed)+'\n'
-        gcode += 'G0 X'+str(curve['x'])+' Y'+str(curve['y'])+' '+cutFeed+'\n'
-
-        #def get_chunks(arr, chunk_size = 51):
-        def get_chunks(arr, chunk_size = 51):
-            chunks  = [ arr[start:start+chunk_size] for start in range(0, len(arr), chunk_size)]
-            return chunks
-
-
-        #return the first pixel that holds data.
-        def first_in_list(arr):
-            end = 0
-            for i in range(len(arr)):
-                if (arr[i] == 0):
-                    end = i
-                if (arr[i] > 0):
-                    break
-
-            return end
-
-        #does this line have any data?
-        def is_blank_line(arr):
-            for i in range(len(arr)):
-                if (arr[i] > 0):
-                    return False
-
-            return True
-
-
-        #return the last pixel that holds data.
-        def last_in_list(arr):
-            end = len(arr)
-            for i in range(len(arr)):
-                if (arr[i] > 0):
-                    end = i
-
-            return end
-
-
-
-        #Flip the image top to bottom.
-        row = curve['data'][::-1]
-
-        previousRight = 99999999999
-        previousLeft  = 0
-        firstRow = True
-        first = True
-        forward = True
-
-        for index, rowData in enumerate(row):
-
-            splitRight = 0
-            splitLeft = 0
-
-
-            #Turnkey - 11-04-15
-            #The below allows iteration over blank lines, while still being 'mostly' optimised for path. could still do with a little improvement for optimising horizontal movement and extrenuous for loops.
-            sub_index = index+1
-            if(sub_index < len(row)):
-                while is_blank_line(row[sub_index-1]):
-                    if(sub_index < len(row)):
-                        sub_index += 1
-                    else:
-                        break
-            #are we processing data before the last line?
-            if(sub_index < len(row)):
-                # Determine where to split the lines.
-                ##################################################
-
-                #If the left most pixel of the next row is earlier than the current row, then extend.
-                if(first_in_list(row[sub_index]) > first_in_list(rowData)):
-                    splitLeft = first_in_list(rowData)
-                else:
-                    splitLeft = first_in_list(row[sub_index])
-
-                #If the end pixel of the next line is later than the current line, extend.
-                if(last_in_list(row[sub_index]) > last_in_list(rowData)):
-                    splitRight = last_in_list(row[sub_index])
-                else:
-                    splitRight = last_in_list(rowData)
-
-            else:
-                splitLeft  = first_in_list(rowData)
-                splitRight = last_in_list(rowData)
-
-
-            #Positive direction
-            if forward:
-                #Split the right side.
-                ###########################################
-
-                #Don't split more than the start of the last row as we print in reverse for alternate lines
-                splitLeft = previousLeft
-                previousRight = splitRight
-
-
-            #Negative direction
-            else:
-                #Split the left side.
-                ###########################################
-
-                #Don't split more than the end of the last row as we print in reverse for alternate lines
-                splitRight = previousRight
-                previousLeft = splitLeft
-
-
-            #Exception to the rule : Don't split the left of the first row.
-            if(firstRow):
-                splitLeft = (previousLeft)
-
-            firstRow = False
-            row2 = rowData[(splitLeft+1):(splitRight+1)]
-
-            #Turnkey 11-04-15 - For the time being, I've disabled the raster optimisation with the below line.
-            #There's a bug where it cannot correctly handle white space between vertical lines in raster images and it fucks up the horizontal alignment.
-            #-Update, users can disable optimisations through the options now.
-            #The optimisation has a bug which can produce hot spots at the edge of rasters.
-            if( not self.options.optimiseraster ):
-                row2 = rowData
-
-            #Heading Left to right, invert the data.
-            if not forward:
-                result_row = row2[::-1]
-            #Heading Right to left.
-            else:
-                result_row = row2
-
-            first = True
-            for chunk in get_chunks(result_row,51):
-                if first:
-                    if forward:
-                        gcode += ("\nG7 $1 ")
-                    else:
-                        gcode += ("\nG7 $0 ")
-                    first = not first
-                else:
-                    gcode +=  ("G7 ")
-
-                b64 = base64.b64encode("".join(chr(y) for y in chunk))
-
-                gcode += ("L"+str(len(b64))+" ")
-                gcode += ("D"+b64+ "\n")
-            forward = not forward
-
-        gcode += ("M5 \n");
-        gcode += ';End of Raster Image '+str(curve['id'])+'\n\n'
-
-        return gcode
-
-    def generate_gcode(self, curve, depth, altfeed=None, altppm=None):
-        gcode = ''
-
-        #Setup our feed rate, either from the layer name or from the default value.
-        if (altfeed):
-            # Use the "alternative" feed rate specified
-            cutFeed = "F%i" % altfeed
-        else:
-            cutFeed = "F%i" % self.options.feed
-
-        cwArc = "G02"
-        ccwArc = "G03"
-
-        # The geometry is reflected, so invert the orientation of the arcs to match
-        if (self.flipArcs):
-            (cwArc, ccwArc) = (ccwArc, cwArc)
+        cwArc = 'G02'
+        ccwArc = 'G03'
 
         # The 'laser on' and 'laser off' m-codes get appended to the GCODE generation
         lg = 'G00'
@@ -812,7 +499,7 @@ class Gcode_tools(inkex.Effect):
                         gcode += PEN_UP
                         self.pen_is_down = False
                         gcode += '; PEN UP\n'
-                    gcode += "G00 " + self.make_args(si[0]) + " F1%i " % self.options.Mfeed + "\n"
+                    gcode += 'G00 ' + self.make_args(si[0]) + ' F12000\n'
                     lg = 'G00'
                     firstGCode = False
 
@@ -822,12 +509,12 @@ class Gcode_tools(inkex.Effect):
             #G01 : Move with the laser turned on to a new point
             elif s[1] == 'line':
                 if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
-                    gcode += PEN_DOWN + "\n"+"G01 " + self.make_args(si[0]) +"\n"
-                    gcode += '; PEN DOWN A\n'
+                    gcode += PEN_DOWN + 'G01 ' + self.make_args(si[0]) +'\n'
+                    gcode += '; PEN DOWN\n'
                     self.pen_is_down = True
                     firstGCode = True
                 else:
-                    gcode += "G01 " + self.make_args(si[0]) + "\n"
+                    gcode += 'G01 ' + self.make_args(si[0]) + '\n'
                 lg = 'G01'
 
             #G02 and G03 : Move in an arc with the laser turned on.
@@ -839,8 +526,8 @@ class Gcode_tools(inkex.Effect):
                     r2 = P(si[0])-P(s[2])
                     if abs(r1.mag() - r2.mag()) < 0.001:
                         if not firstGCode and not self.pen_is_down:
-                            gcode += PEN_DOWN + "\n";
-                            gcode += '; PEN DOWN B\n'
+                            gcode += PEN_DOWN
+                            gcode += '; PEN DOWN\n'
                             self.pen_is_down = True
 
                         if (s[3] > 0):
@@ -848,7 +535,7 @@ class Gcode_tools(inkex.Effect):
                         else:
                             gcode += ccwArc
 
-                        gcode += " " + self.make_args(si[0] + [None, dx, dy, None]) + "\n"
+                        gcode += ' ' + self.make_args(si[0] + [None, dx, dy, None]) + '\n'
                         firstGCode = True
 
                     else:
@@ -859,40 +546,28 @@ class Gcode_tools(inkex.Effect):
                             gcode += ccwArc
 
                         if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
-                            gcode += PEN_DOWN + "\n"+" " + self.make_args(si[0]) + " R%f" % (r*self.options.Xscale) + "S%.2f "
-                            gcode += '; PEN DOWN C\n'
+                            gcode += PEN_DOWN + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + 'S%.2f '
+                            gcode += '; PEN DOWN\n'
                             self.pen_is_down = True
                             firstGCode = True
                         else:
-                            gcode += " " + self.make_args(si[0]) + " R%f" % (r*self.options.Xscale) + "\n"
+                            gcode += ' ' + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + '\n'
 
                     lg = cwArc
                 #The arc is less than the minimum arc radius, draw it as a straight line.
                 else:
                     if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
-                        gcode += PEN_DOWN + "\n"+"G01 " + self.make_args(si[0]) +"\n"
-                        gcode += '; PEN DOWN D\n'
+                        gcode += PEN_DOWN + 'G01 ' + self.make_args(si[0]) +'\n'
+                        gcode += '; PEN DOWN\n'
                         self.pen_is_down = True
                         firstGCode = True
                     else:
-                        gcode += "G01 " + self.make_args(si[0]) + "\n"
+                        gcode += 'G01 ' + self.make_args(si[0]) + '\n'
 
                     lg = 'G01'
 
             self.last_pos = si[0]
 
-        #The end of the layer.
-        if si[1] == 'end':
-            if not gcode.endswith(PEN_UP):
-                gcode += '; LAYER END\n'
-
-        return gcode
-
-    def tool_change(self):
-        # Include a tool change operation
-        gcode = TOOL_CHANGE % (self.currentTool+1)
-        # Select the next available tool
-        self.currentTool = (self.currentTool+1) % 32
         return gcode
 
     ################################################################################
@@ -901,18 +576,11 @@ class Gcode_tools(inkex.Effect):
     ###
     ################################################################################
 
-
     def effect_curve(self, selected):
         selected = list(selected)
 
-        # Set group
-        if self.options.drawCurves and len(selected)>0:
-            self.biarcGroup = inkex.etree.SubElement( selected[0].getparent(), SVG_GROUP_TAG )
-            options.Group = self.biarcGroup
-
         # Recursively compiles a list of paths that are decendant from the given node
         self.skipped = 0
-
 
         def compile_paths(parent, node, trans):
             # Apply the object transform, along with the parent transformation
@@ -925,23 +593,22 @@ class Gcode_tools(inkex.Effect):
 
             if node.tag == SVG_PATH_TAG:
                 # This is a path object
-                if (not node.get("d")): return []
-                csp = cubicsuperpath.parsePath(node.get("d"))
+                if (not node.get('d')):
+                    return []
+                csp = cubicsuperpath.parsePath(node.get('d'))
 
-                path['type'] = "vector"
-                path['id'] = node.get("id")
+                path['type'] = 'vector'
+                path['id'] = node.get('id')
                 path['data'] = []
 
-                if (trans):
+                if trans:
                     simpletransform.applyTransformToPath(trans, csp)
                     path['data'] = csp
 
-                #Apply a transform in the Y plan to flip the path vertically
-                #If we want our origin to the the top left.
-                if (self.options.origin == 'topleft'):
-                    csp = path['data']
-                    simpletransform.applyTransformToPath(([1.0, 0.0, 0], [0.0, -1.0, 0]), csp)
-                    path['data'] = csp
+                # flip vertically
+                csp = path['data']
+                simpletransform.applyTransformToPath(([1.0, 0.0, 0], [0.0, -1.0, 0]), csp)
+                path['data'] = csp
 
                 return path
 
@@ -958,95 +625,68 @@ class Gcode_tools(inkex.Effect):
                 return pathsGroup
 
             else :
-                #Raster the results.
-                if(node.get("x") > 0):
+                # Raster the results.
+                if node.get('x') > 0:
                     tmp = tempfile.gettempdir()
-                    bgcol = "#ffffff" #White
+                    bgcol = '#ffffff' #White
                     curfile = curfile = self.args[-1] #The current inkscape project we're exporting from.
-                    command="inkscape --export-dpi 270 -i %s --export-id-only -e \"%stmpinkscapeexport.png\" -b \"%s\" %s" % (node.get("id"),tmp,bgcol,curfile)
+                    command='inkscape --export-dpi 270 -i %s --export-id-only -e \'%stmpinkscapeexport.png\' -b \'%s\' %s' % (node.get('id'),tmp,bgcol,curfile)
 
                     p = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     return_code = p.wait()
                     f = p.stdout
                     err = p.stderr
 
-
-                    #Fetch the image Data
-                    filename = "%stmpinkscapeexport.png" % (tmp)
-                    if (self.options.origin == 'topleft'):
-                        im = Image.open(filename).transpose(Image.FLIP_TOP_BOTTOM).convert('L')
-                    else:
-                        im = Image.open(filename).convert('L')
+                    # Fetch the image Data
+                    filename = '%stmpinkscapeexport.png' % (tmp)
+                    im = Image.open(filename).transpose(Image.FLIP_TOP_BOTTOM).convert('L')
                     img = ImageOps.invert(im)
 
-                    #Get the image size
+                    # Get the image size
                     imageDataWidth, imageDataheight = img.size
 
-                    #Compile the pixels.
+                    # Compile the pixels.
                     pixels = list(img.getdata())
                     pixels = [pixels[i * (imageDataWidth):(i + 1) * (imageDataWidth)] for i in xrange(imageDataheight)]
 
-                    path['type'] = "raster"
+                    path['type'] = 'raster'
                     path['width'] = imageDataWidth
                     path['height'] = imageDataheight
 
-
-                    #A slow, but reliable way of getting correct coordinates since working with inkscape transpositions and transforms is a major pain in the ass.
-                    #command="inkscape -X --query-id=%s %s" % (node.get("id"),curfile)
-                    #p2 = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    #return_code = p2.wait()
-                    #text = p2.communicate()[0]
-                    #x_position = float(text)
-                    #command="inkscape -Y --query-id=%s %s" % (node.get("id"),curfile)
-                    #p3 = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    #return_code = p3.wait()
-                    #text = p3.communicate()[0]
-                    #y_position = float(text)*-1+self.pageHeight
-
                     if not hasattr(parent, 'glob_nodePositions'):
-                        #Get the XY position of all elements in the inkscape job.
-                        command="inkscape -S %s" % (curfile)
+                        # Get the XY position of all elements in the inkscape job.
+                        command='inkscape -S %s' % (curfile)
                         p5 = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        dataString = str(p5.communicate()[0]).replace("\r", "").split('\n')
-                        #Remove the final array element since the last item has a \r\n which creates a blank array element otherwise.
+                        dataString = str(p5.communicate()[0]).replace('\r', '').split('\n')
+                        # Remove the final array element since the last item has a \r\n which creates a blank array element otherwise.
                         del dataString[-1]
-                        elementList = dict((item.split(",",1)[0],item.split(",",1)[1]) for item in dataString)
+                        elementList = dict((item.split(',',1)[0],item.split(',',1)[1]) for item in dataString)
                         parent.glob_nodePositions = elementList
 
-                    #Lookup the xy coords for this node.
-                    elementData = parent.glob_nodePositions[node.get("id")].split(',')
+                    # Lookup the xy coords for this node.
+                    elementData = parent.glob_nodePositions[node.get('id')].split(',')
                     x_position = float(elementData[0])
                     y_position = float(elementData[1])*-1+self.pageHeight
 
+                    # Don't flip the y position.
+                    y_position = float(elementData[1])
 
-                    #Text is y positioned from the top left.
-                    if (self.options.origin == 'topleft'):
-                        #Don't flip the y position. Since we're moving the origin from bottom left to top left.
-                        y_position = float(elementData[1])
-                    else:
-                        #Very small loss of positioning due to conversion of the dpi in the exported image.
-                        y_position -= imageDataheight/3
+                    # Convert from pixels to mm
+                    path['x'] = float(str('%.3f') % (self.unitScale * x_position))
+                    path['y'] = float(str('%.3f') % (self.unitScale * y_position))
 
+                    # Do not permit being < 0
+                    path['x'] = max(path['x'], 0)
+                    path['y'] = max(path['y'], 0)
 
-                    #Convert from pixels to mm
-                    path['x'] = float(str("%.3f") %(self.unitScale * x_position))
-                    path['y'] = float(str("%.3f") %(self.unitScale * y_position))
-
-                    #Do not permit being < 0
-                    if(path['y'] < 0):
-                        path['y'] = 0
-
-                    if(path['x'] < 0):
-                        path['x'] = 0
-
-                    path['id'] = node.get("id")
+                    path['id'] = node.get('id')
                     path['data'] = pixels
 
                     return path
                 else:
-                    inkex.errormsg("Unable to generate raster for object " + str(node.get("id"))+" as it does not have an x-y coordinate associated.")
+                    inkex.errormsg('Unable to generate raster for object ' + str(node.get('id'))+' as it does not have an x-y coordinate associated.')
 
-            inkex.errormsg("skipping node " + str(node.get("id")))
+            inkex.errormsg('skipping node ' + str(node.get('id')))
             self.skipped += 1
             return []
 
@@ -1063,58 +703,44 @@ class Gcode_tools(inkex.Effect):
         layers = list(reversed(get_layers(self.document)))
 
         # Loop over the layers and objects
-        gcode = ""
-        gcode_raster = ""
+        gcode = ''
+        gcode_raster = ''
         for layer in layers:
             label = layer.get(SVG_LABEL_TAG, '').strip()
-            if (label.startswith("#")):
+            if label.startswith('#'):
                 # Ignore everything selected in this layer
                 for node in layer.iterchildren():
-                    if (node in selected):
+                    if node in selected:
                         selected.remove(node)
                 continue
+            logger.info('layer %s' % label)
+            gcode += '; STARTING LAYER %s\n' % label
 
-            # Parse the layer label text, which consists of the layer name followed
-            # by an optional number of arguments in square brackets.
-            try:
-                originalLayerName = label
-                (layerName, layerParams) = parse_layer_name(label)
-            except ValueError,e:
-                inkex.errormsg("Your inkscape layer is named incorrectly. Please use the format '20 [ppm=40,feed=300]' without the quotes. This would set the power at 20%, cutting at 300mm per minute at a pulse rate of 40 pulse per millimetre. The ppm option is optional, leaving it out will set the laser to continuous wave mode.")
-                return
-
-            # Check if the layer specifies an alternative (from the default) feed rate
-            altfeed = layerParams.get("feed", self.options.feed)
-            altppm = layerParams.get("ppm", None)
-
-            logger.info("layer %s" % layerName)
-            if (layerParams):
-                logger.info("layer params == %s" % layerParams)
             pathList = []
+
             # Apply the layer transform to all objects within the layer
             trans = layer.get('transform', None)
             trans = simpletransform.parseTransform(trans)
 
             for node in layer.iterchildren():
                 if (node in selected):
-                    #Vector path data, cut from x to y in a line or curve
-                    logger.info("node %s" % str(node.tag))
+                    # Vector path data, cut from x to y in a line or curve
+                    logger.info('node %s' % str(node.tag))
                     selected.remove(node)
 
                     try:
-                        newPath = compile_paths(self, node, trans).copy();
+                        newPath = compile_paths(self, node, trans).copy()
                         pathList.append(newPath)
-                        inkex.errormsg("Built gcode for "+str(node.get("id"))+" - will be cut as %s." % (newPath['type']) )
+                        inkex.errormsg('Built gcode for '+str(node.get('id'))+' - will be cut as %s.' % (newPath['type']) )
                     except:
-                        messageOnce = True
                         for objectData in compile_paths(self, node, trans):
-                            inkex.errormsg("Built gcode for group "+str(node.get("id"))+", item %s - will be cut as %s." % (objectData['id'], objectData['type']) )
+                            inkex.errormsg('Built gcode for group '+str(node.get('id'))+', item %s - will be cut as %s.' % (objectData['id'], objectData['type']) )
                             pathList.append(objectData)
                 else:
-                    logger.info("skipping node %s" % node)
+                    logger.info('skipping node %s' % node)
 
             if (not pathList):
-                logger.info("no objects in layer")
+                logger.info('no objects in layer')
                 continue
 
             # reorder paths
@@ -1131,8 +757,7 @@ class Gcode_tools(inkex.Effect):
                 needs_reverse = False
                 for path in pathList:
                     d = distance_between_paths(last_path, path)
-                    rev_d = 999
-                    #rev_d = distance_between_paths(last_path, path, reverse=True)
+                    rev_d = distance_between_paths(last_path, path, reverse=True)
                     if min_dist is None or d < min_dist or rev_d < min_dist:
                         if rev_d < d:
                             needs_reverse = True
@@ -1147,15 +772,13 @@ class Gcode_tools(inkex.Effect):
                     ordered_path_list.append(closest_path)
                 pathList.remove(closest_path)
 
-            logger.info('processed ' + str(len(ordered_path_list)) + ' paths')
-
-            #Fetch the vector or raster data and turn it into GCode
+            # Fetch the vector or raster data and turn it into GCode
             for (i, objectData) in enumerate(ordered_path_list):
                 curve = self.parse_curve(objectData)
 
-                header_data = ""
+                header_data = ''
 
-                # Always output the layer header for information.
+                # always put the pen up at the start of the layer
                 if i == 0:
                     header_data += PEN_UP
                     self.pen_is_down = False
@@ -1166,23 +789,11 @@ class Gcode_tools(inkex.Effect):
                         header_data += PEN_UP
                         self.pen_is_down = False
 
-                size = 60
-                header_data += ";(%s)\n" % ("*"*size)
-                header_data += (";(***** Layer: %%-%ds *****)\n" % (size-19)) % (originalLayerName)
-                header_data += (";(***** Feed Rate: %%-%ds *****)\n" % (size-23)) % (altfeed)
-                if(altppm):
-                    header_data += (";(***** Pulse Rate: %%-%ds *****)\n" % (size-24)) % (altppm)
-                header_data += ";(%s)\n" % ("*"*size)
-                header_data += ";(MSG,Starting layer '%s')\n\n" % originalLayerName
-
                 # Generate the GCode for this layer
-                if (curve['type'] == "vector"):
-                    # Should the curves be drawn in inkscape?
-                    if (self.options.drawCurves):
-                        self.draw_curve(curve)
-                    gcode += header_data + self.generate_gcode(curve, 0, altfeed=altfeed, altppm=altppm)
-                elif (curve['type'] == "raster"):
-                    gcode_raster += header_data + self.generate_raster_gcode(curve, altfeed=altfeed)
+                if curve['type'] == 'vector':
+                    gcode += header_data + self.generate_gcode(curve)
+                elif curve['type'] == 'raster':
+                    gcode_raster += header_data + self.generate_raster_gcode(curve)
 
             gcode += PEN_UP
             self.pen_is_down = False
@@ -1194,23 +805,19 @@ class Gcode_tools(inkex.Effect):
         #Turnkey - This is caused by objects being inside a group.
         if (selected):
 
-            inkex.errormsg("Warning: Your selected object is part of a group. If your group has a transformations/skew/rotation applied to it these will not be exported correctly. Please ungroup your objects first then re-export. Select them and press Shift+Ctrl+G to ungroup.\n")
-
+            inkex.errormsg('Warning: Your selected object is part of a group. If your group has a transformations/skew/rotation applied to it these will not be exported correctly. Please ungroup your objects first then re-export. Select them and press Shift+Ctrl+G to ungroup.\n')
 
             pathList = []
             # Use the identity transform (eg no transform) for the root objects
-            trans = simpletransform.parseTransform("")
+            trans = simpletransform.parseTransform('')
             for node in selected:
                 try:
-                    newPath = compile_paths(self, node, trans).copy();
+                    newPath = compile_paths(self, node, trans).copy()
                     pathList.append(newPath)
-                    inkex.errormsg("Built gcode for "+str(node.get("id"))+" - will be cut as %s." % (newPath['type']) )
+                    inkex.errormsg('Built gcode for '+str(node.get('id'))+' - will be cut as %s.' % (newPath['type']) )
                 except:
-                    messageOnce = True
                     for objectData in compile_paths(self, node, trans):
-                        #if (messageOnce):
-                        inkex.errormsg("Built gcode for group "+str(node.get("id"))+", item %s - will be cut as %s." % (objectData['id'], objectData['type']) )
-                            #messageOnce = False
+                        inkex.errormsg('Built gcode for group '+str(node.get('id'))+', item %s - will be cut as %s.' % (objectData['id'], objectData['type']) )
                         pathList.append(objectData)
 
 
@@ -1218,38 +825,19 @@ class Gcode_tools(inkex.Effect):
                 for objectData in pathList:
                     curve = self.parse_curve(objectData)
 
-                    header_data = ""
-                    #Turnkey : Always output the layer header for information.
-                    if (len(layers) > 0):
-                        header_data += PEN_UP+"\n"
+                    header_data = ''
+                    if len(layers) > 0:
+                        header_data += PEN_UP
                         self.pen_is_down = False
-                        size = 60
-                        header_data += ";(%s)\n" % ("*"*size)
-                        header_data += (";(***** Layer: %%-%ds *****)\n" % (size-19)) % (originalLayerName)
-                        header_data += (";(***** Feed Rate: %%-%ds *****)\n" % (size-23)) % (altfeed)
-                        if(altppm):
-                            header_data += (";(***** Pulse Rate: %%-%ds *****)\n" % (size-24)) % (altppm)
-                        header_data += ";(%s)\n" % ("*"*size)
-                        header_data += ";(MSG,Starting layer '%s')\n\n" % originalLayerName
 
-                    #Generate the GCode for this layer
-                    if (curve['type'] == "vector"):
-                        #Should the curves be drawn in inkscape?
-                        if (self.options.drawCurves):
-                            self.draw_curve(curve)
+                    # generate the gcode for this layer
+                    if (curve['type'] == 'vector'):
+                        gcode += header_data + self.generate_gcode(curve, 0)
+                    elif (curve['type'] == 'raster'):
+                        gcode_raster += header_data + self.generate_raster_gcode(curve)
 
-                        gcode += header_data+self.generate_gcode(curve, 0, altfeed=altfeed, altppm=altppm)
-                    elif (curve['type'] == "raster"):
-                        gcode_raster += header_data+self.generate_raster_gcode(curve, altfeed=altfeed)
-
-        if self.options.homeafter:
-            gcode += "\n\nG00 X0 Y0 F4000 ; home"
-
-
-        #Always raster before vector cutting.
-        gcode = gcode_raster+"\n\n"+gcode
-
-        return gcode
+        # raster before vector, never... uh... hm
+        return '\n\n'.join([gcode_raster, gcode])
 
     def effect(self):
         global options
@@ -1257,91 +845,54 @@ class Gcode_tools(inkex.Effect):
         selected = self.selected.values()
 
         root = self.document.getroot()
-        #See if the user has the document setup in mm or pixels.
+
+        # check if the user has the document setup in mm or pixels.
         try:
-            self.pageHeight = float(root.get("height", None))
+            self.pageHeight = float(root.get('height', None))
         except:
-            inkex.errormsg(("Please change your inkscape project units to be in pixels, not inches or mm. In Inkscape press ctrl+shift+d and change 'units' on the page tab to px. The option 'default units' can be set to mm or inch, these are the units displayed on your rulers."))
+            inkex.errormsg(('Please change your inkscape project units to be in pixels, not inches or mm. In Inkscape press ctrl+shift+d and change \'units\' on the page tab to px. The option \'default units\' can be set to mm or inch, these are the units displayed on your rulers.'))
             return
 
-        self.flipArcs = (self.options.Xscale*self.options.Yscale < 0)
-        self.currentTool = 0
-
         self.filename = options.file.strip()
-        if (self.filename == "-1.0" or self.filename == ""):
-            inkex.errormsg(("Please select an output file name."))
+        if (self.filename == '-1.0' or self.filename == ''):
+            inkex.errormsg(('Please select an output file name.'))
             return
 
         if (not self.filename.lower().endswith(GCODE_EXTENSION)):
             # Automatically append the correct extension
             self.filename += GCODE_EXTENSION
 
-        logger.enabled = self.options.logging
-        logger.info("Laser script started")
-        logger.info("output file == %s" % self.options.file)
+        logger.info('4xiDraw export script started')
+        logger.info('output file: %s' % self.options.file)
 
         if len(selected)<=0:
-            inkex.errormsg(("This extension requires at least one selected path."))
+            inkex.errormsg(('This extension requires at least one selected path.'))
             return
 
         dirExists = self.check_dir()
         if (not dirExists):
             return
 
-        gcode = self.header;
+        gcode = ''
 
-        if (self.options.unit == "mm"):
-            self.unitScale = 0.282222222222
-            gcode += "G21 ; All units in mm\n"
-        elif (self.options.unit == "in"):
-            self.unitScale = 0.011111
-            gcode += "G20 ; All units in in\n"
-        else:
-            inkex.errormsg(("You must choose mm or in"))
-            return
+        # use millimeters
+        self.unitScale = 0.282222222222
+        gcode += 'G21 ; All units in mm\n'
 
-        gcode += "M80 ; Turn on Optional Peripherals Board at LMN\n"
-
-        #Put the header data in the gcode file
-        gcode += """
-; Raster data will always precede vector data
-; Default Cut Feedrate %i mm per minute
-; Default Move Feedrate %i mm per minute
-; Default Laser Intensity %i percent\n""" % (self.options.feed, self.options.Mfeed, self.options.laser)
-
-        if self.options.homebefore:
-            gcode += "G28 XY; home X and Y\n\n"
-
-        #if self.options.function == 'Curve':
         data = self.effect_curve(selected)
         if data:
             gcode += data
 
-        if (self.options.double_sided_cutting):
-            gcode += "\n\n;(MSG,Please flip over material)\n\n"
-            # Include a tool change operation
-            gcode += self.tool_change()
-
-            logger.info("*** processing mirror image")
-
-            self.options.Yscale *= -1
-            self.flipArcs = not(self.flipArcs)
-            self.pageHeight = 0
-            gcode += self.effect_curve(selected)
-
         try:
-            f = open(self.options.directory+'/'+self.options.file, "w")
-            f.write(gcode + self.footer)
-            f.close()
+            with open('%s/%s' % (self.options.directory, self.options.file), 'w') as f:
+                f.write(gcode)
         except:
-            inkex.errormsg(("Can not write to specified file!"))
+            inkex.errormsg(('Cannot write to specified file.'))
             return
 
-        inkex.errormsg(str(extents))
-
         if (self.skipped > 0):
-            inkex.errormsg(("Warning: skipped %d object(s) because they were not paths (Vectors) or images (Raster). Please convert them to paths using the menu 'Path->Object To Path'" % self.skipped))
+            inkex.errormsg(('Warning: skipped %d object(s) because they were not paths (Vectors) or images (Raster). Please convert them to paths using the menu \'Path->Object To Path\'' % self.skipped))
 
 e = Gcode_tools()
 e.affect()
-inkex.errormsg("Finished processing.")
+inkex.errormsg('Finished processing.')
