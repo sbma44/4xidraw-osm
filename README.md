@@ -26,7 +26,7 @@ docker build -t sbma44/4xidraw-osm:base -f Dockerfile.base .
 
 OSM is quite large, and you might only be interested in a small area. For this reason the system is designed to load data for a particular OSM extract.
 
-When building, you must specify which OSM extract(s) your image will store. You can do so by passing in comma-separated links to one or more .osm.bz2 extract(s) of an OSM region, like the ones supplied by geofabrik:
+When building, you must specify which OSM extract(s) your image will store. You can do so by passing in comma-separated links to one or more .osm.bz2 extract(s) of an OSM region, like the ones supplied by [Geofabrik](https://www.geofabrik.de/data/download.html):
 
 ```
 docker build -t sbma44/4xidraw-osm:new-york --build-arg DOWNLOAD=http://download.geofabrik.de/north-america/us/new-york-latest.osm.bz2 .
