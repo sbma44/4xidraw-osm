@@ -4,9 +4,7 @@
 
 Have your robot draw parts of OpenStreetMap (OSM).
 
-## Building a Docker image
-
-The goal of this system is to enable rapid creation of SVGs from a given OSM extract without tediously reloading data, then to send that SVG data to a 4xiDraw plotter robot. The [4xiDraw is an open design](www.instructables.com/id/4xiDraw/) that lets anyone build their own plotter.
+The goal of this system is to enable rapid creation of SVGs from a given OSM extract without tediously reloading data, then to send that SVG data to a 4xiDraw plotter robot. It uses Docker to make dependency installation less painful and time-consuming. The [4xiDraw is an open design](www.instructables.com/id/4xiDraw/) that lets anyone build their own pen plotter robot.
 
 This system consists of a few parts:
 
@@ -14,7 +12,9 @@ This system consists of a few parts:
 - an improved version of the 4xiDraw Inkscape plugin for converting SVGs to gcode
 - a post-processing script to rationalize separate gcode files from multilayer SVGs
 
-### Building the base image (optional)
+Note that the last two components are likely to be combined after a pending refactor.
+
+## Building the base image (optional)
 
 You probably don't have to do this -- you should be able to pull the prebuilt image from Docker Hub. But for the record:
 
@@ -22,7 +22,9 @@ You probably don't have to do this -- you should be able to pull the prebuilt im
 docker build -t sbma44/4xidraw-osm:base -f Dockerfile.base .
 ```
 
-### OK, here's the important part
+## Building an extract image
+
+OSM is quite large, and you might only be interested in a small area. For this reason the system is designed to load data for a particular OSM extract.
 
 When building, you must specify which OSM extract(s) your image will store. You can do so by passing in comma-separated links to one or more .osm.bz2 extract(s) of an OSM region, like the ones supplied by geofabrik:
 
@@ -54,7 +56,7 @@ docker run -e AWS_ACCESS_KEY_ID=ABCDEFGHIJKLM -e AWS_SECRET_ACCESS_KEY=123456789
 
 ### Overriding layer selection (advanced)
 
-By default, your output SVG will contain layers for streets, buildings, train tracks and bicycle paths. It's possible to specify your own selection criteria by passing the container an environment variable named `LAYERS` in the format: `LAYER_NAME|TABLE_NAME|WHERE_CLAUSE`. Here's an example. Assume the following is stored in a file called `layers.txt`.
+By default, your output SVG will contain layers for streets, buildings, alleys, train tracks and bicycle paths. This is not a particularly cartographically well-tuned selection; I recommend tweaking it. It's possible to specify your own selection criteria by passing the container an environment variable named `LAYERS` in the format: `LAYER_NAME|TABLE_NAME|WHERE_CLAUSE`. Here's an example. Assume the following is stored in a file called `layers.txt`.
 
 ```
 highway|planet_osm_line|highway IS NOT NULL
@@ -69,7 +71,7 @@ You could then invoke it with:
 docker run -e LAYERS="$(cat layers.txt)" -v /tmp/4xidraw:/tmp/out sbma44/4xidraw-osm:district-of-columbia '{"type":"Polygon","coordinates":[[[-77,38.87],[-76.97,38.87],[-76.97,38.9],[-77,38.9],[-77,38.87]]]}' /tmp/out
 ```
 
-This feature assumes familiarity with the default table schema created by the [osm2pgsql](https://wiki.openstreetmap.org/wiki/Osm2pgsql) tool.
+This feature assumes familiarity with the default table schema created by the [osm2pgsql](https://wiki.openstreetmap.org/wiki/Osm2pgsql) tool. I suggest running the container with a bash prompt override of `--entrypoint` and the `-P` flag to open up the exposed port 5432. Start the postgresql service, connect to the relevant port with QGIS, and inspect the data to assemble the filter criteria you want.
 
 ## Using Inkscape
 
@@ -80,7 +82,7 @@ The Docker container will create SVGs intended for further editing in Inkscape.
 - Copy `inkscape/4xidraw.*` to the [Inkscape extensions directory](https://inkscape.org/en/gallery/%3Dextension/).
 - Restart Inkscape.
 
-### Using an SVG
+### Converting an SVG to Gcode
 
 1. Open the SVG file.
 2. Open `Document Properties` (ctrl + shift + d). Change `Units` to `px`. `Default Units` can be any value, but `mm` is recommended.
@@ -118,4 +120,4 @@ I strongly recommend using the `Visualize` option to determine if there are any 
 
 It's important to note that OpenStreetMap data is licensed under the [Open Database License (ODbL)](https://www.openstreetmap.org/copyright). The ODbL carries attribution requirements that are likely to apply to works produced with this software, including drawings made by a 4xiDraw or any redistribution of Docker images containing loaded OSM data. It is your responsibility to understand and comply with these requirements; please be sure to familiarize yourself with them.
 
-Wherever possible the code in this repo is published under the BSD license. Please see [LICENSE.md](LICENSE.md) for more details. Please take careful note of the disclaimers present in that file, as sending your 4xiDraw bad gcode can damage the machine and objects in its vicinity. This code was written for my own use, for which it has proven satisfactory. But I cannot and will not accept responsibility for its use or any damage or injury that might result. Please do not use this code if you are unwilling to assume this risk.
+The Inkscape plugin descends from a long lineage of badly-written GPLv2 Python, so that is the primary license for this repo. I have offered my original contributions under a dual licensing scheme as well (BSD). Please see [LICENSE.md](LICENSE.md) for more details. Please take careful note of the disclaimers present in that file, as sending your 4xiDraw bad gcode can damage the machine and objects in its vicinity. This code was written for my own use, for which it has proven satisfactory. But I cannot and will not accept responsibility for its use or any damage or injury that might result. Please do not use this code if you are unwilling to assume this risk.
