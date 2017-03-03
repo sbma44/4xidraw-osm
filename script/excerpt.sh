@@ -9,15 +9,8 @@ DBNAME="osm"
 CLIP="$1"
 DEST="$2"
 PSQL="psql -U postgres -t -q $DBNAME"
-TMP="/tmp/4xidraw/out"
+TMP="/tmp/4xidraw"
 mkdir -p "$TMP"
-
-# debug mode for docker
-if [ -n "${DEBUG:-}" ]; then
-  while [ 1 ]; do
-    sleep 60
-  done
-fi
 
 rm $TMP/* || true
 
@@ -29,11 +22,20 @@ KARTOGRAPH_JSON="{
 "
 
 i=0
-CRITERIA="highway|planet_osm_line|highway IS NOT NULL
-bicycle|planet_osm_line|route='bicycle'
+CRITERIA="road|planet_osm_line|highway IS NOT NULL AND highway NOT IN ('service', 'cycleway')
+alley|planet_osm_line|highway='service'
+bicycle|planet_osm_line|route='bicycle' OR highway='cycleway'
 train|planet_osm_line|route='train'
-building|planet_osm_polygon|building IS NOT NULL"
+building|planet_osm_polygon|building IS NOT NULL
+greenspace|planet_osm_polygon|landuse='grass' OR leisure='park'"
 if [ -n "${LAYERS:-}" ]; then CRITERIA="${LAYERS:-}"; fi
+
+echo "========================================================================="
+echo "using selection criteria:"
+echo "-------------------------------------------------------------------------"
+echo "$CRITERIA"
+echo "========================================================================="
+
 echo "$CRITERIA" > $TMP/criteria
 while IFS='' read -r criterion; do
   LABEL="$(echo $criterion | cut -d '|' -f 1)"
@@ -62,9 +64,9 @@ done < $TMP/criteria
 KARTOGRAPH_JSON="$KARTOGRAPH_JSON
       }
     }"
-echo "$KARTOGRAPH_JSON" > $TMP/../config.json
+echo "$KARTOGRAPH_JSON" > $TMP/config.json
 SNAPSHOT="${DBNAME}-$(date '+%s')"
-kartograph $TMP/../config.json -o $TMP/$SNAPSHOT.svg
+kartograph $TMP/config.json -o $TMP/$SNAPSHOT.svg
 
 # convert groups to inkscape layers
 sed 's/<g /<g inkscape:groupmode="layer" /g' < $TMP/$SNAPSHOT.svg > $TMP/$SNAPSHOT.svg.new && mv $TMP/$SNAPSHOT.svg.new $TMP/$SNAPSHOT.svg

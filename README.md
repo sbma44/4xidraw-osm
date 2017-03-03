@@ -54,13 +54,19 @@ docker run -e AWS_ACCESS_KEY_ID=ABCDEFGHIJKLM -e AWS_SECRET_ACCESS_KEY=123456789
 
 ### Overriding layer selection (advanced)
 
-By default, your output SVG will contain layers for streets, buildings, train tracks and bicycle paths. It's possible to specify your own selection criteria by passing the container an environment variable named `LAYERS` in the format: `LAYER_NAME|TABLE_NAME|WHERE_CLAUSE`. Here's an example:
+By default, your output SVG will contain layers for streets, buildings, train tracks and bicycle paths. It's possible to specify your own selection criteria by passing the container an environment variable named `LAYERS` in the format: `LAYER_NAME|TABLE_NAME|WHERE_CLAUSE`. Here's an example. Assume the following is stored in a file called `layers.txt`.
 
 ```
 highway|planet_osm_line|highway IS NOT NULL
 bicycle|planet_osm_line|route='bicycle'
 train|planet_osm_line|route='train'
 building|planet_osm_polygon|building IS NOT NULL
+```
+
+You could then invoke it with:
+
+```
+docker run -e LAYERS="$(cat layers.txt)" -v /tmp/4xidraw:/tmp/out sbma44/4xidraw-osm:district-of-columbia '{"type":"Polygon","coordinates":[[[-77,38.87],[-76.97,38.87],[-76.97,38.9],[-77,38.9],[-77,38.87]]]}' /tmp/out
 ```
 
 This feature assumes familiarity with the default table schema created by the [osm2pgsql](https://wiki.openstreetmap.org/wiki/Osm2pgsql) tool.
