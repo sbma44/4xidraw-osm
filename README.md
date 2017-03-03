@@ -1,4 +1,4 @@
-![demo](demo.gif)
+![demo](etc/demo.gif)
 
 # 4xidraw-OSM
 
