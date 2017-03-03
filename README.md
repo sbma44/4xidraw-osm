@@ -110,7 +110,7 @@ This will create new versions of each file in your current directory, each with 
 
 At the recommendation of the 4xiDraw docs, I've been using [Universal Gcode Sender](https://winder.github.io/ugs_website/) (UGS). I recommend version 1.0.9 or higher.
 
-To use, open the application according to its instructions and connect to the 4xiDraw serial port at 115200 baud. Use the manual machine controls with a small step size (e.g. 10mm) and the `X-` and `Y-` buttons to job the pen holder to the point in its range furthest from the Arduino. At this point, hit the `Reset Zero` button. You have just defined the 0,0 origin point for your print.
+To use, open the application according to its instructions and connect to the 4xiDraw serial port at 115200 baud. Use the manual machine controls with a small step size (e.g. 10mm) and the `X-` and `Y-` buttons to jog the pen holder to the point in its range furthest from the Arduino. At this point, hit the `Reset Zero` button. You have just defined the 0,0 origin point for your print.
 
 Now you can use the UGS file sending mode to run a print using your generated gcode. Hit the `Return to Zero` button between each print.
 
