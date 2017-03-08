@@ -318,7 +318,7 @@ def biarc(sp1, sp2, z1, z2, depth=0,):
                 ((v.mag()<STRAIGHT_DISTANCE_TOLERANCE or TE.mag()<STRAIGHT_DISTANCE_TOLERANCE or TS.mag()<STRAIGHT_DISTANCE_TOLERANCE) or
                     1-abs(TS*v/(TS.mag()*v.mag()))<STRAIGHT_TOLERANCE)    ):
                 # Both tangents are parallel and start and end are the same - line straight
-                # or one of tangents still smaller then tollerance
+                # or one of tangents still smaller then tolerance
 
                 # Both tangents and v are parallel - line straight
         return [ [sp1[1],'line', 0, 0, sp2[1], [z1,z2]] ]
