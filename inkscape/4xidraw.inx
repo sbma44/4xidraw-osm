@@ -22,8 +22,8 @@
             <_param name="help" type="description">(blank is your desktop)</_param>
             <param name="Xscale" type="float" precision="4" min="-1000" max="1000" _gui-text="Scale along X axis:">1</param>
             <param name="Yscale" type="float" precision="4" min="-1000" max="1000" _gui-text="Scale along Y axis:">1</param>
-            <param name="Xsplode" type="float" precision="4" min="1" max="280" _gui-text="Scale to fit, x-axis (mm):"></param>
-            <param name="Ysplode" type="float" precision="4" min="1" max="280" _gui-text="Scale to fit, y-axis (mm):"></param>
+            <param name="Xsplode" type="float" precision="4" min="0" max="280" _gui-text="Scale to fit, x-axis (mm), 0 to disable:">0</param>
+            <param name="Ysplode" type="float" precision="4" min="0" max="280" _gui-text="Scale to fit, y-axis (mm), 0 to disable:">0</param>
             <param name="collapsepaths" type="boolean" _gui-text="Collapse paths (avoid pen-lifting for very small gaps)">true</param>
         </page>
         <page name='tab' _gui-text='Advanced'>

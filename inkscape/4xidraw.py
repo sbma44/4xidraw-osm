@@ -415,8 +415,8 @@ class Gcode_tools(inkex.Effect):
         self.OptionParser.add_option('-d', '--directory', action='store', type='string', dest='directory', default=outdir, help='Directory for gcode file')
         self.OptionParser.add_option('-u', '--Xscale', action='store', type='float', dest='Xscale', default='1.0', help='Scale factor X')
         self.OptionParser.add_option('-v', '--Yscale', action='store', type='float', dest='Yscale', default='1.0', help='Scale factor Y')
-        self.OptionParser.add_option('-x', '--Xsplode', action='store', type='float', dest='Xsplode', default='', help='Scale to fit X')
-        self.OptionParser.add_option('-y', '--Ysplode', action='store', type='float', dest='Ysplode', default='', help='Scale to fit Y')
+        self.OptionParser.add_option('-x', '--Xsplode', action='store', type='float', dest='Xsplode', default='280', help='Scale to fit X')
+        self.OptionParser.add_option('-y', '--Ysplode', action='store', type='float', dest='Ysplode', default='280', help='Scale to fit Y')
         self.OptionParser.add_option('', '--collapsepaths', action='store', type='inkbool', dest='collapsepaths', default=True, help='Collapse paths (avoid pen-lifting for very small gaps).')
         self.OptionParser.add_option('', '--biarc-tolerance', action='store', type='float', dest='biarc_tolerance', default='1', help='Tolerance used when calculating biarc interpolation.')
         self.OptionParser.add_option('', '--biarc-max-split-depth', action='store', type='int', dest='biarc_max_split_depth', default='4', help='Defines maximum depth of splitting while approximating using biarcs.')
@@ -468,12 +468,11 @@ class Gcode_tools(inkex.Effect):
                 -self.options.Yscale,
                 1
             ]
-        a = [self.options.Xoffset, self.options.Yoffset, 0, 0, 0, 0]
 
         args = []
         for (i, axis) in enumerate(('X', 'Y', 'Z', 'I', 'J', 'K')):
             if c[i] is not None:
-                value = self.unitScale*((c[i] * m[i]) + a[i])
+                value = self.unitScale * c[i] * m[i]
                 args.append('%s%.3f' % (axis,value))
         return ' '.join(args)
 
@@ -495,7 +494,7 @@ class Gcode_tools(inkex.Effect):
                 dist = 999
                 if self.last_pos is not None:
                     dist = math.sqrt((si[0][0] - self.last_pos[0])**2 + (si[0][1] - self.last_pos[1])**2)
-                if dist > 1.0: # don't bother with moves <1mm
+                if dist > 1.0 or not self.options.collapsepaths: # don't bother with moves <1mm
                     # Pull up the pen if it was down previously.
                     if not gcode.endswith(PEN_UP):
                         gcode += PEN_UP
@@ -705,7 +704,7 @@ class Gcode_tools(inkex.Effect):
                         extent[offset] = compare(extent[offset], float(m.group(2)))
         return extent
 
-    def translate_gcode(self, gcode, x_offset, y_offset):
+    def transform_gcode(self, gcode, x_offset=0, y_offset=0, x_scale=1, y_scale=1):
         out = ''
         for line in gcode.split('\n'):
             for (i, line_part) in enumerate(line.split(' ')):
@@ -716,10 +715,12 @@ class Gcode_tools(inkex.Effect):
                     out += line_part
                 else:
                     offset = x_offset
+                    scale = x_scale
                     if m.group(1) == 'Y':
                         offset = y_offset
+                        scale = y_scale
                     out += m.group(1)
-                    out += '{:.3f}'.format(float(m.group(2)) + offset)
+                    out += '{:.3f}'.format(scale * (float(m.group(2)) + offset))
             out += '\n'
         return out
 
@@ -879,12 +880,26 @@ class Gcode_tools(inkex.Effect):
 
         logger.info('extents: %s' % str(extents))
 
-        # translate gcode by shared offset, write file(s)
+        # translate gcode by shared offset & optional scale, write file(s)
+        splode = 1.0
+        if self.options.Xsplode != '' and self.options.Xsplode is not None:
+            xsplode = float(self.options.Xsplode)
+        if self.options.Ysplode != '' and self.options.Ysplode is not None:
+            ysplode = float(self.options.Ysplode)
+
+        if xsplode == 0 and ysplode != 0:
+            splode = (ysplode / (extents[3] - extents[1]))
+        elif xsplode != 0 and ysplode == 0:
+            splode = (xsplode / (extents[2] - extents[0]))
+        else:
+            # scale to the smaller dimension
+            splode = min( (xsplode / (extents[2] - extents[0])), (ysplode / (extents[3] - extents[1])))
+
         for layer_id in gcode_output:
             try:
                 fn = os.path.normpath('%s/%s.%s' % (self.options.directory, layer_id, GCODE_EXTENSION))
                 with open(fn, 'w') as f:
-                    f.write(self.translate_gcode(gcode_output[layer_id], -1 * extents[0], -1 * extents[1]))
+                    f.write(self.transform_gcode(gcode_output[layer_id], -1 * extents[0], -1 * extents[1], splode, splode))
             except:
                 inkex.errormsg('Cannot write to %s file.' % fn)
                 return
