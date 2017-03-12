@@ -409,7 +409,7 @@ class Gcode_tools(inkex.Effect):
 
         self.last_pos = None
 
-        self.RE_COORD = re.compile(r'([XY])(\-?\d+(\.\d+)?)')
+        self.RE_COORD = re.compile(r'([XYZIJK])(\-?\d+(\.\d+)?)')
 
         self.OptionParser.add_option("", "--tab", action="store", type="string", dest="tab", default="", help="Means nothing right now. Notebooks Tab.")
         self.OptionParser.add_option('-d', '--directory', action='store', type='string', dest='directory', default=outdir, help='Directory for gcode file')
@@ -473,99 +473,79 @@ class Gcode_tools(inkex.Effect):
         for (i, axis) in enumerate(('X', 'Y', 'Z', 'I', 'J', 'K')):
             if c[i] is not None:
                 value = self.unitScale * c[i] * m[i]
-                args.append('%s%.3f' % (axis,value))
+                args.append('%s%.8f' % (axis,value))
         return ' '.join(args)
 
-    def generate_gcode(self, curve):
+    def generate_gcode(self, curve, feature_id='unknown'):
         gcode = ''
 
         cwArc = 'G02'
         ccwArc = 'G03'
 
-        # The 'laser on' and 'laser off' m-codes get appended to the GCODE generation
-        lg = 'G00'
-        firstGCode = False
-
         for i in range(1,len(curve['data'])):
-            s, si = curve['data'][i-1], curve['data'][i]
+            s = curve['data'][i-1]
+            si = curve['data'][i]
 
             #G00 : Move with the laser off to a new point
             if s[1] == 'move':
                 dist = 999
                 if self.last_pos is not None:
                     dist = math.sqrt((si[0][0] - self.last_pos[0])**2 + (si[0][1] - self.last_pos[1])**2)
-                if dist > 1.0 or not self.options.collapsepaths: # don't bother with moves <1mm
+                # only move if collapsepaths is disabled or the move is > 1mm
+                if dist > 1.0 or not self.options.collapsepaths:
                     # Pull up the pen if it was down previously.
                     if not gcode.endswith(PEN_UP):
                         gcode += PEN_UP
                         self.pen_is_down = False
-                        gcode += '; PEN UP\n'
+                        gcode += '; [%s] PEN UP\n' % feature_id
                     gcode += 'G00 ' + self.make_args(si[0]) + ' F12000\n'
-                    lg = 'G00'
-                    firstGCode = False
-
-            elif s[1] == 'end':
-                lg = 'G00'
 
             #G01 : Move with the laser turned on to a new point
             elif s[1] == 'line':
-                if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
+                if not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
                     gcode += PEN_DOWN + 'G01 ' + self.make_args(si[0]) +'\n'
-                    gcode += '; PEN DOWN\n'
+                    gcode += '; [%s] PEN DOWN\n' % feature_id
                     self.pen_is_down = True
-                    firstGCode = True
                 else:
                     gcode += 'G01 ' + self.make_args(si[0]) + '\n'
-                lg = 'G01'
 
             #G02 and G03 : Move in an arc with the laser turned on.
             elif s[1] == 'arc':
+                logger.info('; arc - ' + str(s))
+                if not self.pen_is_down:
+                    gcode += '; [%s] PEN DOWN\n' % feature_id
+                    gcode += PEN_DOWN
+                    self.pen_is_down = True
+
                 dx = s[2][0]-s[0][0]
                 dy = s[2][1]-s[0][1]
                 if abs((dx**2 + dy**2)*self.options.Xscale) > self.options.min_arc_radius:
+                    gcode += '; [%s] arc dist > min_arc_radius\n' % feature_id
                     r1 = P(s[0])-P(s[2])
                     r2 = P(si[0])-P(s[2])
                     if abs(r1.mag() - r2.mag()) < 0.001:
-                        if not firstGCode and not self.pen_is_down:
-                            gcode += PEN_DOWN
-                            gcode += '; PEN DOWN\n'
-                            self.pen_is_down = True
-
+                        gcode += '; [%s] r1.mag - rs.m2 < 0.001\n' % feature_id
                         if (s[3] > 0):
                             gcode += cwArc
                         else:
                             gcode += ccwArc
-
                         gcode += ' ' + self.make_args(si[0] + [None, dx, dy, None]) + '\n'
-                        firstGCode = True
 
                     else:
-                        r = (r1.mag()+r2.mag())/2
+                        gcode += '; [%s] r1.mag - rs.m2 > 0.001\n' % feature_id
+                        r = (r1.mag()+r2.mag()) / 2
                         if (s[3] > 0):
                             gcode += cwArc
                         else:
                             gcode += ccwArc
 
-                        if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
-                            gcode += PEN_DOWN + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + 'S%.2f '
-                            gcode += '; PEN DOWN\n'
-                            self.pen_is_down = True
-                            firstGCode = True
-                        else:
-                            gcode += ' ' + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + '\n'
+                        gcode += self.make_args(si[0]) + (' R%f' % (r*self.options.Xscale)) + 'S%.2f '
+                        # gcode += ' ' + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + '\n'
 
-                    lg = cwArc
                 #The arc is less than the minimum arc radius, draw it as a straight line.
                 else:
-                    if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
-                        gcode += PEN_DOWN + 'G01 ' + self.make_args(si[0]) +'\n'
-                        gcode += '; PEN DOWN\n'
-                        self.pen_is_down = True
-                        firstGCode = True
-                    else:
-                        gcode += 'G01 ' + self.make_args(si[0]) + '\n'
-
-                    lg = 'G01'
+                    gcode += '; [%s] arc dist < min_arc_radius, drawing line instead\n' % feature_id
+                    gcode += 'G01 ' + self.make_args(si[0]) +'\n'
 
             self.last_pos = si[0]
 
@@ -666,8 +646,8 @@ class Gcode_tools(inkex.Effect):
                 y_position = float(elementData[1])
 
                 # Convert from pixels to mm
-                path['x'] = float(str('%.3f') % (self.unitScale * x_position))
-                path['y'] = float(str('%.3f') % (self.unitScale * y_position))
+                path['x'] = float(str('%.5f') % (self.unitScale * x_position))
+                path['y'] = float(str('%.5f') % (self.unitScale * y_position))
 
                 # Do not permit being < 0
                 path['x'] = max(path['x'], 0)
@@ -688,11 +668,13 @@ class Gcode_tools(inkex.Effect):
         extent = [None, None, None, None]
         for line in gcode.split('\n'):
             line_parts = line.split(' ')
-            if line_parts[0] not in ('G00', 'G01'):
+            if line_parts[0] not in ('G00', 'G01', 'G02', 'G03'):
                 continue
             for line_part in line_parts[1:]:
                 m = self.RE_COORD.match(line_part)
                 if m is None:
+                    continue
+                if m.group(1) in ('I', 'J', 'K'): # only use XY for extents
                     continue
                 modifier = 0
                 if m.group(1) == 'Y':
@@ -716,11 +698,14 @@ class Gcode_tools(inkex.Effect):
                 else:
                     offset = x_offset
                     scale = x_scale
+                    if m.group(1) in ('Y', 'J'):
+                        scale = y_scale
                     if m.group(1) == 'Y':
                         offset = y_offset
-                        scale = y_scale
+                    if m.group(1) in ('I', 'J'):
+                        offset = 0 # IJ are relative; don't move them
                     out += m.group(1)
-                    out += '{:.3f}'.format(scale * (float(m.group(2)) + offset))
+                    out += '{:.5f}'.format(scale * (float(m.group(2)) + offset))
             out += '\n'
         return out
 
@@ -813,7 +798,7 @@ class Gcode_tools(inkex.Effect):
             for path in pathList:
                 if path['data'][0][0][0] < left_most['data'][0][0][0]:
                     left_most = path
-            pathList.remove(path)
+            pathList.remove(left_most)
             ordered_path_list = [left_most]
             while len(pathList) > 0:
                 last_path = ordered_path_list[-1]
@@ -841,6 +826,8 @@ class Gcode_tools(inkex.Effect):
 
             # Fetch the vector or raster data and turn it into GCode
             for (i, objectData) in enumerate(ordered_path_list):
+                gcode += '; id ' + objectData.get('id', 'UNKNOWN') + '\n'
+
                 curve = self.parse_curve(objectData)
                 header_data = ''
 
@@ -857,7 +844,7 @@ class Gcode_tools(inkex.Effect):
 
                 # Generate the gcode for this layer
                 if curve['type'] == 'vector':
-                    gcode += header_data + self.generate_gcode(curve)
+                    gcode += header_data + self.generate_gcode(curve, objectData.get('id', 'n/a'))
                 elif curve['type'] == 'raster':
                     gcode_raster += header_data + self.generate_raster_gcode(curve)
 
