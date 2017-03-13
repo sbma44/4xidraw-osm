@@ -100,7 +100,7 @@ code it will only scale from the original 0,0 coordinate, it doesn't scale based
 import inkex, simplestyle, simplepath
 import cubicsuperpath, simpletransform, bezmisc
 
-import os
+import os, os.path
 import math
 import bezmisc
 import re
@@ -148,7 +148,7 @@ SVG_IMAGE_TAG = inkex.addNS('image', 'svg')
 SVG_TEXT_TAG = inkex.addNS('text', 'svg')
 SVG_LABEL_TAG = inkex.addNS('label', 'inkscape')
 
-GCODE_EXTENSION = '.gcode'
+GCODE_EXTENSION = 'gcode'
 
 options = {}
 
@@ -318,7 +318,7 @@ def biarc(sp1, sp2, z1, z2, depth=0,):
                 ((v.mag()<STRAIGHT_DISTANCE_TOLERANCE or TE.mag()<STRAIGHT_DISTANCE_TOLERANCE or TS.mag()<STRAIGHT_DISTANCE_TOLERANCE) or
                     1-abs(TS*v/(TS.mag()*v.mag()))<STRAIGHT_TOLERANCE)    ):
                 # Both tangents are parallel and start and end are the same - line straight
-                # or one of tangents still smaller then tollerance
+                # or one of tangents still smaller then tolerance
 
                 # Both tangents and v are parallel - line straight
         return [ [sp1[1],'line', 0, 0, sp2[1], [z1,z2]] ]
@@ -409,13 +409,15 @@ class Gcode_tools(inkex.Effect):
 
         self.last_pos = None
 
+        self.RE_COORD = re.compile(r'([XYZIJK])(\-?\d+(\.\d+)?)')
+
         self.OptionParser.add_option("", "--tab", action="store", type="string", dest="tab", default="", help="Means nothing right now. Notebooks Tab.")
         self.OptionParser.add_option('-d', '--directory', action='store', type='string', dest='directory', default=outdir, help='Directory for gcode file')
-        self.OptionParser.add_option('-f', '--filename', action='store', type='string', dest='file', default='-1.0', help='File name')
         self.OptionParser.add_option('-u', '--Xscale', action='store', type='float', dest='Xscale', default='1.0', help='Scale factor X')
         self.OptionParser.add_option('-v', '--Yscale', action='store', type='float', dest='Yscale', default='1.0', help='Scale factor Y')
-        self.OptionParser.add_option('-x', '--Xoffset', action='store', type='float', dest='Xoffset', default='0.0', help='Offset along X')
-        self.OptionParser.add_option('-y', '--Yoffset', action='store', type='float', dest='Yoffset', default='0.0', help='Offset along Y')
+        self.OptionParser.add_option('-x', '--Xsplode', action='store', type='float', dest='Xsplode', default='280', help='Scale to fit X')
+        self.OptionParser.add_option('-y', '--Ysplode', action='store', type='float', dest='Ysplode', default='280', help='Scale to fit Y')
+        self.OptionParser.add_option('', '--collapsepaths', action='store', type='inkbool', dest='collapsepaths', default=True, help='Collapse paths (avoid pen-lifting for very small gaps).')
         self.OptionParser.add_option('', '--biarc-tolerance', action='store', type='float', dest='biarc_tolerance', default='1', help='Tolerance used when calculating biarc interpolation.')
         self.OptionParser.add_option('', '--biarc-max-split-depth', action='store', type='int', dest='biarc_max_split_depth', default='4', help='Defines maximum depth of splitting while approximating using biarcs.')
         self.OptionParser.add_option('', '--min-arc-radius', action='store', type='float', dest='min_arc_radius', default='0.0005', help='All arc having radius less than minimum will be considered as straight line')
@@ -466,105 +468,84 @@ class Gcode_tools(inkex.Effect):
                 -self.options.Yscale,
                 1
             ]
-        a = [self.options.Xoffset, self.options.Yoffset, 0, 0, 0, 0]
 
         args = []
         for (i, axis) in enumerate(('X', 'Y', 'Z', 'I', 'J', 'K')):
             if c[i] is not None:
-                value = self.unitScale*((c[i] * m[i]) + a[i])
-                args.append('%s%.3f' % (axis,value))
+                value = self.unitScale * c[i] * m[i]
+                args.append('%s%.8f' % (axis,value))
         return ' '.join(args)
 
-    def generate_gcode(self, curve):
+    def generate_gcode(self, curve, feature_id='unknown'):
         gcode = ''
 
         cwArc = 'G02'
         ccwArc = 'G03'
 
-        # The 'laser on' and 'laser off' m-codes get appended to the GCODE generation
-        lg = 'G00'
-        firstGCode = False
-
         for i in range(1,len(curve['data'])):
-            s, si = curve['data'][i-1], curve['data'][i]
+            s = curve['data'][i-1]
+            si = curve['data'][i]
 
             #G00 : Move with the laser off to a new point
             if s[1] == 'move':
                 dist = 999
                 if self.last_pos is not None:
                     dist = math.sqrt((si[0][0] - self.last_pos[0])**2 + (si[0][1] - self.last_pos[1])**2)
-                if dist > 1.0: # don't bother with moves <1mm
+                # only move if collapsepaths is disabled or the move is > 1mm
+                if dist > 1.0 or not self.options.collapsepaths:
                     # Pull up the pen if it was down previously.
                     if not gcode.endswith(PEN_UP):
                         gcode += PEN_UP
                         self.pen_is_down = False
-                        gcode += '; PEN UP\n'
+                        gcode += '; [%s] PEN UP\n' % feature_id
                     gcode += 'G00 ' + self.make_args(si[0]) + ' F12000\n'
-                    lg = 'G00'
-                    firstGCode = False
-
-            elif s[1] == 'end':
-                lg = 'G00'
 
             #G01 : Move with the laser turned on to a new point
             elif s[1] == 'line':
-                if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
+                if not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
                     gcode += PEN_DOWN + 'G01 ' + self.make_args(si[0]) +'\n'
-                    gcode += '; PEN DOWN\n'
+                    gcode += '; [%s] PEN DOWN\n' % feature_id
                     self.pen_is_down = True
-                    firstGCode = True
                 else:
                     gcode += 'G01 ' + self.make_args(si[0]) + '\n'
-                lg = 'G01'
 
             #G02 and G03 : Move in an arc with the laser turned on.
             elif s[1] == 'arc':
+                logger.info('; arc - ' + str(s))
+                if not self.pen_is_down:
+                    gcode += '; [%s] PEN DOWN\n' % feature_id
+                    gcode += PEN_DOWN
+                    self.pen_is_down = True
+
                 dx = s[2][0]-s[0][0]
                 dy = s[2][1]-s[0][1]
                 if abs((dx**2 + dy**2)*self.options.Xscale) > self.options.min_arc_radius:
+                    gcode += '; [%s] arc dist > min_arc_radius\n' % feature_id
                     r1 = P(s[0])-P(s[2])
                     r2 = P(si[0])-P(s[2])
                     if abs(r1.mag() - r2.mag()) < 0.001:
-                        if not firstGCode and not self.pen_is_down:
-                            gcode += PEN_DOWN
-                            gcode += '; PEN DOWN\n'
-                            self.pen_is_down = True
-
+                        gcode += '; [%s] r1.mag - rs.m2 < 0.001\n' % feature_id
                         if (s[3] > 0):
                             gcode += cwArc
                         else:
                             gcode += ccwArc
-
                         gcode += ' ' + self.make_args(si[0] + [None, dx, dy, None]) + '\n'
-                        firstGCode = True
 
                     else:
-                        r = (r1.mag()+r2.mag())/2
+                        gcode += '; [%s] r1.mag - rs.m2 > 0.001\n' % feature_id
+                        r = (r1.mag()+r2.mag()) / 2
                         if (s[3] > 0):
                             gcode += cwArc
                         else:
                             gcode += ccwArc
 
-                        if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
-                            gcode += PEN_DOWN + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + 'S%.2f '
-                            gcode += '; PEN DOWN\n'
-                            self.pen_is_down = True
-                            firstGCode = True
-                        else:
-                            gcode += ' ' + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + '\n'
+                        gcode += self.make_args(si[0]) + (' R%f' % (r*self.options.Xscale)) + 'S%.2f '
+                        # gcode += ' ' + self.make_args(si[0]) + ' R%f' % (r*self.options.Xscale) + '\n'
 
-                    lg = cwArc
                 #The arc is less than the minimum arc radius, draw it as a straight line.
                 else:
-                    if not firstGCode and not self.pen_is_down: #Include the ppm values for the first G01 command in the set.
-                        gcode += PEN_DOWN + 'G01 ' + self.make_args(si[0]) +'\n'
-                        gcode += '; PEN DOWN\n'
-                        self.pen_is_down = True
-                        firstGCode = True
-                    else:
-                        gcode += 'G01 ' + self.make_args(si[0]) + '\n'
-
-                    lg = 'G01'
+                    gcode += '; [%s] arc dist < min_arc_radius, drawing line instead\n' % feature_id
+                    gcode += 'G01 ' + self.make_args(si[0]) +'\n'
 
             self.last_pos = si[0]
 
@@ -575,120 +556,193 @@ class Gcode_tools(inkex.Effect):
     ###        Curve to Gcode
     ###
     ################################################################################
+    def compile_paths(self, parent, node, trans):
+        # Apply the object transform, along with the parent transformation
+        mat = node.get('transform', None)
+        path = {}
 
-    def effect_curve(self, selected):
+        if mat:
+            mat = simpletransform.parseTransform(mat)
+            trans = simpletransform.composeTransform(trans, mat)
+
+        if node.tag == SVG_PATH_TAG:
+            # This is a path object
+            if (not node.get('d')):
+                return []
+            csp = cubicsuperpath.parsePath(node.get('d'))
+
+            path['type'] = 'vector'
+            path['id'] = node.get('id')
+            path['data'] = []
+
+            if trans:
+                simpletransform.applyTransformToPath(trans, csp)
+                path['data'] = csp
+
+            # flip vertically
+            csp = path['data']
+            simpletransform.applyTransformToPath(([1.0, 0.0, 0], [0.0, -1.0, 0]), csp)
+            path['data'] = csp
+
+            return path
+
+        elif node.tag == SVG_GROUP_TAG:
+            # This node is a group of other nodes
+            pathsGroup = []
+            for child in node.iterchildren():
+                data = self.compile_paths(parent, child, trans)
+                #inkex.errormsg(str(data))
+                if type(data) is not list:
+                    pathsGroup.append(data.copy())
+                else:
+                    pathsGroup += data
+            return pathsGroup
+
+        else :
+            # Raster the results.
+            if node.get('x') > 0:
+                tmp = tempfile.gettempdir()
+                bgcol = '#ffffff' #White
+                curfile = curfile = self.args[-1] #The current inkscape project we're exporting from.
+                command='inkscape --export-dpi 270 -i %s --export-id-only -e \'%stmpinkscapeexport.png\' -b \'%s\' %s' % (node.get('id'),tmp,bgcol,curfile)
+
+                p = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                return_code = p.wait()
+                f = p.stdout
+                err = p.stderr
+
+                # Fetch the image Data
+                filename = '%stmpinkscapeexport.png' % (tmp)
+                im = Image.open(filename).transpose(Image.FLIP_TOP_BOTTOM).convert('L')
+                img = ImageOps.invert(im)
+
+                # Get the image size
+                imageDataWidth, imageDataheight = img.size
+
+                # Compile the pixels.
+                pixels = list(img.getdata())
+                pixels = [pixels[i * (imageDataWidth):(i + 1) * (imageDataWidth)] for i in xrange(imageDataheight)]
+
+                path['type'] = 'raster'
+                path['width'] = imageDataWidth
+                path['height'] = imageDataheight
+
+                if not hasattr(parent, 'glob_nodePositions'):
+                    # Get the XY position of all elements in the inkscape job.
+                    command='inkscape -S %s' % (curfile)
+                    p5 = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    dataString = str(p5.communicate()[0]).replace('\r', '').split('\n')
+                    # Remove the final array element since the last item has a \r\n which creates a blank array element otherwise.
+                    del dataString[-1]
+                    elementList = dict((item.split(',',1)[0],item.split(',',1)[1]) for item in dataString)
+                    parent.glob_nodePositions = elementList
+
+                # Lookup the xy coords for this node.
+                elementData = parent.glob_nodePositions[node.get('id')].split(',')
+                x_position = float(elementData[0])
+                y_position = float(elementData[1])*-1+self.pageHeight
+
+                # Don't flip the y position.
+                y_position = float(elementData[1])
+
+                # Convert from pixels to mm
+                path['x'] = float(str('%.5f') % (self.unitScale * x_position))
+                path['y'] = float(str('%.5f') % (self.unitScale * y_position))
+
+                # Do not permit being < 0
+                path['x'] = max(path['x'], 0)
+                path['y'] = max(path['y'], 0)
+
+                path['id'] = node.get('id')
+                path['data'] = pixels
+
+                return path
+            else:
+                inkex.errormsg('Unable to generate raster for object ' + str(node.get('id'))+' as it does not have an x-y coordinate associated.')
+
+        inkex.errormsg('skipping node ' + str(node.get('id')))
+        self.skipped += 1
+        return []
+
+    def get_gcode_extents(self, gcode):
+        extent = [None, None, None, None]
+        for line in gcode.split('\n'):
+            line_parts = line.split(' ')
+            if line_parts[0] not in ('G00', 'G01', 'G02', 'G03'):
+                continue
+            for line_part in line_parts[1:]:
+                m = self.RE_COORD.match(line_part)
+                if m is None:
+                    continue
+                if m.group(1) in ('I', 'J', 'K'): # only use XY for extents
+                    continue
+                modifier = 0
+                if m.group(1) == 'Y':
+                    modifier = 1
+                for (compare, offset) in ((min, modifier), (max, 2 + modifier)):
+                    if extent[offset] is None:
+                        extent[offset] = float(m.group(2))
+                    else:
+                        extent[offset] = compare(extent[offset], float(m.group(2)))
+        return extent
+
+    def transform_gcode(self, gcode, x_offset=0, y_offset=0, x_scale=1, y_scale=1):
+        out = ''
+        for line in gcode.split('\n'):
+            for (i, line_part) in enumerate(line.split(' ')):
+                if i > 0:
+                    out += ' '
+                m = self.RE_COORD.match(line_part)
+                if m is None:
+                    out += line_part
+                else:
+                    offset = x_offset
+                    scale = x_scale
+                    if m.group(1) in ('Y', 'J'):
+                        scale = y_scale
+                    if m.group(1) == 'Y':
+                        offset = y_offset
+                    if m.group(1) in ('I', 'J'):
+                        offset = 0 # IJ are relative; don't move them
+                    out += m.group(1)
+                    out += '{:.5f}'.format(scale * (float(m.group(2)) + offset))
+            out += '\n'
+        return out
+
+    def effect(self):
+        global options
+        options = self.options
+        selected = self.selected.values()
+
+        root = self.document.getroot()
+
+        # check if the user has the document setup in mm or pixels.
+        try:
+            self.pageHeight = float(root.get('height', None))
+        except:
+            inkex.errormsg(('Please change your inkscape project units to be in pixels, not inches or mm. In Inkscape press ctrl+shift+d and change \'units\' on the page tab to px. The option \'default units\' can be set to mm or inch, these are the units displayed on your rulers.'))
+            return
+
+        logger.info('4xiDraw export script started')
+        logger.info('output directory: %s' % self.options.directory)
+
+        if len(selected)<=0:
+            inkex.errormsg('This extension requires at least one selected path.')
+            return
+
+        dirExists = self.check_dir()
+        if (not dirExists):
+            return
+
+        gcode = ''
+
+        # use millimeters
+        self.unitScale = 0.282222222222
+
         selected = list(selected)
 
         # Recursively compiles a list of paths that are decendant from the given node
         self.skipped = 0
-
-        def compile_paths(parent, node, trans):
-            # Apply the object transform, along with the parent transformation
-            mat = node.get('transform', None)
-            path = {}
-
-            if mat:
-                mat = simpletransform.parseTransform(mat)
-                trans = simpletransform.composeTransform(trans, mat)
-
-            if node.tag == SVG_PATH_TAG:
-                # This is a path object
-                if (not node.get('d')):
-                    return []
-                csp = cubicsuperpath.parsePath(node.get('d'))
-
-                path['type'] = 'vector'
-                path['id'] = node.get('id')
-                path['data'] = []
-
-                if trans:
-                    simpletransform.applyTransformToPath(trans, csp)
-                    path['data'] = csp
-
-                # flip vertically
-                csp = path['data']
-                simpletransform.applyTransformToPath(([1.0, 0.0, 0], [0.0, -1.0, 0]), csp)
-                path['data'] = csp
-
-                return path
-
-            elif node.tag == SVG_GROUP_TAG:
-                # This node is a group of other nodes
-                pathsGroup = []
-                for child in node.iterchildren():
-                    data = compile_paths(parent, child, trans)
-                    #inkex.errormsg(str(data))
-                    if type(data) is not list:
-                        pathsGroup.append(data.copy())
-                    else:
-                        pathsGroup += data
-                return pathsGroup
-
-            else :
-                # Raster the results.
-                if node.get('x') > 0:
-                    tmp = tempfile.gettempdir()
-                    bgcol = '#ffffff' #White
-                    curfile = curfile = self.args[-1] #The current inkscape project we're exporting from.
-                    command='inkscape --export-dpi 270 -i %s --export-id-only -e \'%stmpinkscapeexport.png\' -b \'%s\' %s' % (node.get('id'),tmp,bgcol,curfile)
-
-                    p = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    return_code = p.wait()
-                    f = p.stdout
-                    err = p.stderr
-
-                    # Fetch the image Data
-                    filename = '%stmpinkscapeexport.png' % (tmp)
-                    im = Image.open(filename).transpose(Image.FLIP_TOP_BOTTOM).convert('L')
-                    img = ImageOps.invert(im)
-
-                    # Get the image size
-                    imageDataWidth, imageDataheight = img.size
-
-                    # Compile the pixels.
-                    pixels = list(img.getdata())
-                    pixels = [pixels[i * (imageDataWidth):(i + 1) * (imageDataWidth)] for i in xrange(imageDataheight)]
-
-                    path['type'] = 'raster'
-                    path['width'] = imageDataWidth
-                    path['height'] = imageDataheight
-
-                    if not hasattr(parent, 'glob_nodePositions'):
-                        # Get the XY position of all elements in the inkscape job.
-                        command='inkscape -S %s' % (curfile)
-                        p5 = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        dataString = str(p5.communicate()[0]).replace('\r', '').split('\n')
-                        # Remove the final array element since the last item has a \r\n which creates a blank array element otherwise.
-                        del dataString[-1]
-                        elementList = dict((item.split(',',1)[0],item.split(',',1)[1]) for item in dataString)
-                        parent.glob_nodePositions = elementList
-
-                    # Lookup the xy coords for this node.
-                    elementData = parent.glob_nodePositions[node.get('id')].split(',')
-                    x_position = float(elementData[0])
-                    y_position = float(elementData[1])*-1+self.pageHeight
-
-                    # Don't flip the y position.
-                    y_position = float(elementData[1])
-
-                    # Convert from pixels to mm
-                    path['x'] = float(str('%.3f') % (self.unitScale * x_position))
-                    path['y'] = float(str('%.3f') % (self.unitScale * y_position))
-
-                    # Do not permit being < 0
-                    path['x'] = max(path['x'], 0)
-                    path['y'] = max(path['y'], 0)
-
-                    path['id'] = node.get('id')
-                    path['data'] = pixels
-
-                    return path
-                else:
-                    inkex.errormsg('Unable to generate raster for object ' + str(node.get('id'))+' as it does not have an x-y coordinate associated.')
-
-            inkex.errormsg('skipping node ' + str(node.get('id')))
-            self.skipped += 1
-            return []
 
         # Compile a list of layers in this document. We compile a list of only the layers
         # we need to use, so we can know ahead of time whether to put tool change
@@ -703,18 +757,14 @@ class Gcode_tools(inkex.Effect):
         layers = list(reversed(get_layers(self.document)))
 
         # Loop over the layers and objects
-        gcode = ''
-        gcode_raster = ''
+        gcode_output = {}
         for layer in layers:
-            label = layer.get(SVG_LABEL_TAG, '').strip()
-            if label.startswith('#'):
-                # Ignore everything selected in this layer
-                for node in layer.iterchildren():
-                    if node in selected:
-                        selected.remove(node)
-                continue
-            logger.info('layer %s' % label)
-            gcode += '; STARTING LAYER %s\n' % label
+            gcode = ''
+            gcode_raster = ''
+
+            logger.info('layer: %s' % layer.attrib['id'])
+
+            gcode += '; STARTING LAYER %s\n' % layer.attrib['id']
 
             pathList = []
 
@@ -729,11 +779,11 @@ class Gcode_tools(inkex.Effect):
                     selected.remove(node)
 
                     try:
-                        newPath = compile_paths(self, node, trans).copy()
+                        newPath = self.compile_paths(self, node, trans).copy()
                         pathList.append(newPath)
                         inkex.errormsg('Built gcode for '+str(node.get('id'))+' - will be cut as %s.' % (newPath['type']) )
                     except:
-                        for objectData in compile_paths(self, node, trans):
+                        for objectData in self.compile_paths(self, node, trans):
                             inkex.errormsg('Built gcode for group '+str(node.get('id'))+', item %s - will be cut as %s.' % (objectData['id'], objectData['type']) )
                             pathList.append(objectData)
                 else:
@@ -748,7 +798,7 @@ class Gcode_tools(inkex.Effect):
             for path in pathList:
                 if path['data'][0][0][0] < left_most['data'][0][0][0]:
                     left_most = path
-            pathList.remove(path)
+            pathList.remove(left_most)
             ordered_path_list = [left_most]
             while len(pathList) > 0:
                 last_path = ordered_path_list[-1]
@@ -772,10 +822,13 @@ class Gcode_tools(inkex.Effect):
                     ordered_path_list.append(closest_path)
                 pathList.remove(closest_path)
 
+            logger.info('found %d paths in layer %s' % (len(ordered_path_list), layer.attrib['id']))
+
             # Fetch the vector or raster data and turn it into GCode
             for (i, objectData) in enumerate(ordered_path_list):
-                curve = self.parse_curve(objectData)
+                gcode += '; id ' + objectData.get('id', 'UNKNOWN') + '\n'
 
+                curve = self.parse_curve(objectData)
                 header_data = ''
 
                 # always put the pen up at the start of the layer
@@ -789,9 +842,9 @@ class Gcode_tools(inkex.Effect):
                         header_data += PEN_UP
                         self.pen_is_down = False
 
-                # Generate the GCode for this layer
+                # Generate the gcode for this layer
                 if curve['type'] == 'vector':
-                    gcode += header_data + self.generate_gcode(curve)
+                    gcode += header_data + self.generate_gcode(curve, objectData.get('id', 'n/a'))
                 elif curve['type'] == 'raster':
                     gcode_raster += header_data + self.generate_raster_gcode(curve)
 
@@ -799,99 +852,47 @@ class Gcode_tools(inkex.Effect):
             self.pen_is_down = False
             gcode += '; ORDERED PATH LIST END / PEN UP\n'
 
-        #Turnkey - Need to figure out why inkscape sometimes gets to this point and hasn't found the objects above.
-        # If there are any objects left over, it's because they don't belong
-        # to any inkscape layer (bug in inkscape?). Output those now.
-        #Turnkey - This is caused by objects being inside a group.
-        if (selected):
+            gcode_output[layer.attrib['id']] = '\n\n'.join(['G21 ; All units in mm', gcode_raster, gcode])
 
-            inkex.errormsg('Warning: Your selected object is part of a group. If your group has a transformations/skew/rotation applied to it these will not be exported correctly. Please ungroup your objects first then re-export. Select them and press Shift+Ctrl+G to ungroup.\n')
+        # calculate origin offset for generated gcode
+        extents = None
+        for layer_id in gcode_output:
+            file_extents = self.get_gcode_extents(gcode_output[layer_id])
+            if extents is None:
+                extents = file_extents
+            else:
+                for i in range(0, 4):
+                    compare = i < 2 and min or max
+                    extents[i] = compare(file_extents[i], extents[i])
 
-            pathList = []
-            # Use the identity transform (eg no transform) for the root objects
-            trans = simpletransform.parseTransform('')
-            for node in selected:
-                try:
-                    newPath = compile_paths(self, node, trans).copy()
-                    pathList.append(newPath)
-                    inkex.errormsg('Built gcode for '+str(node.get('id'))+' - will be cut as %s.' % (newPath['type']) )
-                except:
-                    for objectData in compile_paths(self, node, trans):
-                        inkex.errormsg('Built gcode for group '+str(node.get('id'))+', item %s - will be cut as %s.' % (objectData['id'], objectData['type']) )
-                        pathList.append(objectData)
+        logger.info('extents: %s' % str(extents))
 
+        # translate gcode by shared offset & optional scale, write file(s)
+        splode = 1.0
+        if self.options.Xsplode != '' and self.options.Xsplode is not None:
+            xsplode = float(self.options.Xsplode)
+        if self.options.Ysplode != '' and self.options.Ysplode is not None:
+            ysplode = float(self.options.Ysplode)
 
-            if pathList:
-                for objectData in pathList:
-                    curve = self.parse_curve(objectData)
+        if xsplode == 0 and ysplode != 0:
+            splode = (ysplode / (extents[3] - extents[1]))
+        elif xsplode != 0 and ysplode == 0:
+            splode = (xsplode / (extents[2] - extents[0]))
+        else:
+            # scale to the smaller dimension
+            splode = min( (xsplode / (extents[2] - extents[0])), (ysplode / (extents[3] - extents[1])))
 
-                    header_data = ''
-                    if len(layers) > 0:
-                        header_data += PEN_UP
-                        self.pen_is_down = False
-
-                    # generate the gcode for this layer
-                    if (curve['type'] == 'vector'):
-                        gcode += header_data + self.generate_gcode(curve, 0)
-                    elif (curve['type'] == 'raster'):
-                        gcode_raster += header_data + self.generate_raster_gcode(curve)
-
-        # raster before vector, never... uh... hm
-        return '\n\n'.join([gcode_raster, gcode])
-
-    def effect(self):
-        global options
-        options = self.options
-        selected = self.selected.values()
-
-        root = self.document.getroot()
-
-        # check if the user has the document setup in mm or pixels.
-        try:
-            self.pageHeight = float(root.get('height', None))
-        except:
-            inkex.errormsg(('Please change your inkscape project units to be in pixels, not inches or mm. In Inkscape press ctrl+shift+d and change \'units\' on the page tab to px. The option \'default units\' can be set to mm or inch, these are the units displayed on your rulers.'))
-            return
-
-        self.filename = options.file.strip()
-        if (self.filename == '-1.0' or self.filename == ''):
-            inkex.errormsg(('Please select an output file name.'))
-            return
-
-        if (not self.filename.lower().endswith(GCODE_EXTENSION)):
-            # Automatically append the correct extension
-            self.filename += GCODE_EXTENSION
-
-        logger.info('4xiDraw export script started')
-        logger.info('output file: %s' % self.options.file)
-
-        if len(selected)<=0:
-            inkex.errormsg(('This extension requires at least one selected path.'))
-            return
-
-        dirExists = self.check_dir()
-        if (not dirExists):
-            return
-
-        gcode = ''
-
-        # use millimeters
-        self.unitScale = 0.282222222222
-        gcode += 'G21 ; All units in mm\n'
-
-        data = self.effect_curve(selected)
-        if data:
-            gcode += data
-
-        try:
-            with open('%s/%s' % (self.options.directory, self.options.file), 'w') as f:
-                f.write(gcode)
-        except:
-            inkex.errormsg(('Cannot write to specified file.'))
-            return
+        for layer_id in gcode_output:
+            try:
+                fn = os.path.normpath('%s/%s.%s' % (self.options.directory, layer_id, GCODE_EXTENSION))
+                with open(fn, 'w') as f:
+                    f.write(self.transform_gcode(gcode_output[layer_id], -1 * extents[0], -1 * extents[1], splode, splode))
+            except:
+                inkex.errormsg('Cannot write to %s file.' % fn)
+                return
 
         if (self.skipped > 0):
-            inkex.errormsg(('Warning: skipped %d object(s) because they were not paths (Vectors) or images (Raster). Please convert them to paths using the menu \'Path->Object To Path\'' % self.skipped))
+            inkex.errormsg('Warning: skipped %d object(s) because they were not paths (Vectors) or images (Raster). Please convert them to paths using the menu \'Path->Object To Path\'' % self.skipped)
 
 e = Gcode_tools()
 e.affect()
