@@ -80,31 +80,27 @@ The Docker container will create SVGs intended for further editing in Inkscape.
 ### Setup
 
 - Copy `inkscape/4xidraw.*` to the [Inkscape extensions directory](https://inkscape.org/en/gallery/%3Dextension/).
+- If you plan to draw solid, filled-in shapes, I strongly recommend installing the [AxiDraw software](http://wiki.evilmadscientist.com/Axidraw_Software_Installation) for its Hatching extension.
 - Restart Inkscape.
 
 ### Converting an SVG to Gcode
 
 1. Open the SVG file.
-2. Open `Document Properties` (ctrl + shift + d). Change `Units` to `px`. `Default Units` can be any value, but `mm` is recommended.
-3. Select all paths (ctrl + alt + a) and scale them to the dimensions you want. My 4xiDraw's maximum safe print area is 280mm x 280mm.
-4. Open the `Layers` dialog (shift + ctrl + l). Select a desired layer. Select all paths within the layer (ctrl + a).
-5. Go to `Extensions > 4xiDraw > 4xiDraw Exporter...`
-6. Specify a filename and output directory. Other defaults should be fine. Hit OK.
-7. You now have a mostly-printable gcode file!
+2. Open `Document Properties` (ctrl + shift + d). Change `Units` to `px`. If the setting is already `px` you may need to switch it to something else, then back to `px` -- this is an Inkscape bug. `Default Units` can be any value, but `mm` is recommended.
+3. If your project will involve multiple layers (e.g. the use of different writing instruments), separate the SVG into different layers. Output from the Docker script will already be in this format.
+4. Edit shapes as necessary.
+5. Select all geometry in all layers with (ctrl + alt + a). Note that layers must be visible and unlocked to be selected.
+6. Go to `Extensions > 4xiDraw > 4xiDraw Exporter...`
+7. Specify an output directory. Gcode files will be placed there, named after each layer's `id` value. Docker-generated layers will be named appropriately, but if you create new layers you may wish to edit the ID manually in the Inkscape XML editor to avoid a name like `layer18.gcode`.
+8. Decide what options to use:
+  - You can scale geometry by a constant factor (not recommended)
+  - You can specify a bounding width along the X and/or Y axis, to which all layers will be scaled
+  - You can collapse paths together, minimizing pen lifts for very small moves. This helps join together OSM geometry into continuous paths -- ths is good for both speed and line quality. However it will negatively affect layers with very precise geometry or small features like hatching (or buildings, potentially). Use with caution.
+  - The `Advanced` features are inherited and I can't speak intelligently about them. In my own use I have sometimes lowered the tolerance values to get more precise arcs. I don't see a ton of difference, to be honest.
 
-## Postprocessing
+## What comes out
 
-Unless you have been unusually lucky in Inkscape, the generated gcode often has an offset from the top left of the printable area, aka the origin. This can result in jobs that go out of bounds, damaging your machine. For this reason I have created `rationalize_gcode.py`, which processes one or more gcode files and translates all coordinates to use a minimum of 0, 0.
-
-Why not integrate this logic into the exporter plugin? Simple: the plugin is designed to work with a single layer at a time. Translating layers independently would shift them out of alignment with one another.
-
-You can use the script like so:
-
-```
-python3 /path/to/rationalize_gcode.py /path/to/gcode/*.g
-```
-
-This will create new versions of each file in your current directory, each with the new suffix `.translated.g`.
+Each layer is generated and then reconciled against one another. Each is translated to that the collective drawing has an origin of (0,0). Consider this when setting the margin for your drawing!
 
 ## Sending to 4xiDraw
 
@@ -114,10 +110,12 @@ To use, open the application according to its instructions and connect to the 4x
 
 Now you can use the UGS file sending mode to run a print using your generated gcode. Hit the `Return to Zero` button between each print.
 
-I strongly recommend using the `Visualize` option to determine if there are any unexpected offsets in your gcode -- failure to do so can damage your machine.
+I strongly recommend using the `Visualize` option to determine if there are any unexpected offsets or invisible paths in your gcode. Failure to do so can damage your machine.
 
 ## License
 
 It's important to note that OpenStreetMap data is licensed under the [Open Database License (ODbL)](https://www.openstreetmap.org/copyright). The ODbL carries attribution requirements that are likely to apply to works produced with this software, including drawings made by a 4xiDraw or any redistribution of Docker images containing loaded OSM data. It is your responsibility to understand and comply with these requirements; please be sure to familiarize yourself with them.
 
-The Inkscape plugin descends from a long lineage of badly-written GPLv2 Python, so that is the primary license for this repo. I have offered my original contributions under a dual licensing scheme as well (BSD). Please see [LICENSE.md](LICENSE.md) for more details. Please take careful note of the disclaimers present in that file, as sending your 4xiDraw bad gcode can damage the machine and objects in its vicinity. This code was written for my own use, for which it has proven satisfactory. But I cannot and will not accept responsibility for its use or any damage or injury that might result. Please do not use this code if you are unwilling to assume this risk.
+The Inkscape plugin descends from a long lineage of badly-written GPLv2 Python, so that is the primary license for this repo. I have offered my original contributions under a dual licensing scheme as well (BSD). Please see [LICENSE.md](LICENSE.md) for more details. Please take careful note of the disclaimers present in that file, as sending your 4xiDraw bad gcode can damage the machine and objects in its vicinity.
+
+This code was written for my own use, for which it has proven satisfactory. But I cannot and will not accept responsibility for its use or any damage or injury that might result. Please do not use this code if you are unwilling to assume this risk.
