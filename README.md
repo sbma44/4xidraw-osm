@@ -4,7 +4,7 @@
 
 Have your robot draw parts of OpenStreetMap (OSM).
 
-The goal of this system is to enable rapid creation of SVGs from a given OSM extract without tediously reloading data, then to convert the SVG data to Gcode that the 4xiDraw can use. The project employs Docker to make dependency installation less painful. The [4xiDraw is an open design](www.instructables.com/id/4xiDraw/) that lets anyone build their own pen plotter robot.
+The goal of this system is to enable rapid creation of SVGs from a given OSM extract without tediously reloading data, then to convert the SVG data to Gcode that the 4xiDraw can use. The project employs Docker to make dependency installation less painful. The [4xiDraw is an open design](https://www.instructables.com/id/4xiDraw/) that lets anyone build their own pen plotter robot.
 
 There are a few parts:
 
